@@ -26,10 +26,11 @@ const (
 	DefaultMaxIdleConnsPerHost = 20
 )
 
-// APIKeyBinding 把一把网关 Key 绑到可选区域。Site 为空表示不绑定，走进程默认 SITE。
+// APIKeyBinding 将网关 Key 绑定到区域或具体账号；账号绑定的区域由账号推导。
 type APIKeyBinding struct {
-	Key  string
-	Site string
+	Key       string
+	Site      string
+	AccountID string
 }
 
 type Config struct {
@@ -232,25 +233,31 @@ func (c Config) Addr() string {
 	return c.Host + ":" + strconv.Itoa(c.Port)
 }
 
-// ParseAPIKeys 解析 `cbp_aaa:global,cbp_bbb:domestic`。无区域后缀的 Key 仍可鉴权，只是不绑 site。
+// ParseAPIKeys 解析区域或 account=<id> 后缀；无后缀的 Key 只做鉴权。
 func ParseAPIKeys(raw string) []APIKeyBinding {
-	parts := strings.Split(raw, ",")
-	out := make([]APIKeyBinding, 0, len(parts))
+	out := make([]APIKeyBinding, 0, strings.Count(raw, ",")+1)
 	seen := map[string]int{}
-	for _, part := range parts {
+	for part := range strings.SplitSeq(raw, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		key, site := part, ""
+		key, site, accountID := part, "", ""
 		if k, rest, ok := strings.Cut(part, ":"); ok {
 			key = strings.TrimSpace(k)
-			site = OptionalSite(rest)
+			if id, bound := strings.CutPrefix(strings.TrimSpace(rest), "account="); bound {
+				accountID = strings.TrimSpace(id)
+				if accountID == "" {
+					continue
+				}
+			} else {
+				site = OptionalSite(rest)
+			}
 		}
 		if key == "" {
 			continue
 		}
-		binding := APIKeyBinding{Key: key, Site: site}
+		binding := APIKeyBinding{Key: key, Site: site, AccountID: accountID}
 		if i, ok := seen[key]; ok {
 			out[i] = binding
 			continue
@@ -261,12 +268,16 @@ func ParseAPIKeys(raw string) []APIKeyBinding {
 	return out
 }
 
-// FormatAPIKeys 把绑定表写成 `cbp_aaa:global,cbp_bbb:domestic`，供回写 .env。
+// FormatAPIKeys 将区域或账号绑定写回兼容的环境变量语法。
 func FormatAPIKeys(keys []APIKeyBinding) string {
 	parts := make([]string, 0, len(keys))
 	for _, binding := range keys {
 		key := strings.TrimSpace(binding.Key)
 		if key == "" {
+			continue
+		}
+		if binding.AccountID != "" {
+			parts = append(parts, key+":account="+binding.AccountID)
 			continue
 		}
 		if site := OptionalSite(binding.Site); site != "" {
@@ -280,21 +291,27 @@ func FormatAPIKeys(keys []APIKeyBinding) string {
 
 // LookupAPIKey 校验网关 Key。ok 表示鉴权通过；site 非空表示这把 Key 绑定了区域。
 func (c Config) LookupAPIKey(token string) (ok bool, site string) {
+	ok, binding := c.LookupAPIKeyBinding(token)
+	return ok, binding.Site
+}
+
+// LookupAPIKeyBinding 返回完整绑定约束，主 Key 同样允许配置账号绑定。
+func (c Config) LookupAPIKeyBinding(token string) (bool, APIKeyBinding) {
 	if token == "" {
-		return false, ""
+		return false, APIKeyBinding{}
 	}
 	matched := false
-	matchedSite := ""
+	var result APIKeyBinding
 	for _, binding := range c.APIKeys {
 		if secretEqual(token, binding.Key) {
 			matched = true
-			matchedSite = binding.Site
+			result = binding
 		}
 	}
 	if secretEqual(token, c.APIKey) {
 		matched = true
 	}
-	return matched, matchedSite
+	return matched, result
 }
 
 func secretEqual(a, b string) bool {

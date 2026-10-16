@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -186,12 +187,20 @@ func (s *Server) authorizeAPI(w http.ResponseWriter, r *http.Request) (bool, str
 	if token == "" {
 		token = strings.TrimSpace(r.Header.Get("X-API-Key"))
 	}
-	ok, site := cfg.LookupAPIKey(token)
+	ok, binding := cfg.LookupAPIKeyBinding(token)
 	if !ok {
 		httputil.WriteJSON(w, http.StatusUnauthorized, openai.NewError("Missing or invalid API key", "authentication_error"))
 		return false, ""
 	}
-	return true, site
+	if binding.AccountID != "" {
+		var err error
+		binding, err = s.bindAccount(r, binding)
+		if err != nil {
+			httputil.WriteJSON(w, http.StatusServiceUnavailable, openai.NewError(err.Error(), "account_unavailable"))
+			return false, ""
+		}
+	}
+	return true, binding.Site
 }
 
 func (s *Server) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -227,6 +236,9 @@ func (s *Server) handleModelInfoAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request, keySite string) {
+	if !boundSiteAllowed(w, r, resolveRequestSite("", r.Header.Get("X-Site"), keySite)) {
+		return
+	}
 	fresh := queryTruthy(r.URL.Query().Get("fresh"))
 	listed, err := s.Svc.ListModelsForSite(r.Context(), resolveRequestSite("", r.Header.Get("X-Site"), keySite), fresh)
 	models := listed.Models
@@ -244,6 +256,9 @@ func (s *Server) handleModelInfo(w http.ResponseWriter, r *http.Request, keySite
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request, keySite string) {
+	if !boundSiteAllowed(w, r, resolveRequestSite("", r.Header.Get("X-Site"), keySite)) {
+		return
+	}
 	fresh := queryTruthy(r.URL.Query().Get("fresh"))
 	listed, err := s.Svc.ListModelsForSite(r.Context(), resolveRequestSite("", r.Header.Get("X-Site"), keySite), fresh)
 	models := listed.Models
@@ -340,7 +355,13 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request, k
 	}
 	reasoningEffort := strutil.First(body.ReasoningEffort, body.ReasoningEffortAlt)
 	site := resolveRequestSite(providerModel.Site, r.Header.Get("X-Site"), keySite)
+	if !boundSiteAllowed(w, r, site) {
+		finish(false, 0, 0, 0, 0, "请求区域与绑定账号不一致", provider.Usage{})
+		return
+	}
 	completeOpts := gateway.CompleteOptions{
+		AccountID:           requestBinding(r).AccountID,
+		FixedAccount:        requestBinding(r).AccountID != "",
 		Model:               providerModel.Model,
 		Messages:            body.Messages,
 		Tools:               body.Tools,
@@ -697,11 +718,23 @@ func (s *Server) handleAdminAPI(w http.ResponseWriter, r *http.Request, path str
 		return
 	case path == "/direct-admin/api/client-config/bound-keys" && r.Method == http.MethodPost:
 		var body struct {
-			Site string `json:"site"`
+			Site      string `json:"site"`
+			AccountID string `json:"accountId"`
 		}
-		_ = httputil.ReadJSON(r, &body)
+		if err := httputil.ReadJSON(r, &body); err != nil {
+			httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "无效的绑定配置"})
+			return
+		}
 		site := config.OptionalSite(body.Site)
-		if site == "" {
+		body.AccountID = strings.TrimSpace(body.AccountID)
+		if body.AccountID != "" {
+			binding, err := s.bindAccount(r, config.APIKeyBinding{AccountID: body.AccountID})
+			if err != nil || (site != "" && site != binding.Site) {
+				httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "绑定账号不可用或区域不一致"})
+				return
+			}
+			site = binding.Site
+		} else if site == "" {
 			httputil.WriteJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "site 必须是 domestic 或 global"})
 			return
 		}
@@ -711,7 +744,7 @@ func (s *Server) handleAdminAPI(w http.ResponseWriter, r *http.Request, path str
 			return
 		}
 		cfg := s.Svc.Config()
-		next := append(append([]config.APIKeyBinding(nil), cfg.APIKeys...), config.APIKeyBinding{Key: key, Site: site})
+		next := append(slices.Clone(cfg.APIKeys), config.APIKeyBinding{Key: key, Site: site, AccountID: body.AccountID})
 		envPath, err := s.persistBoundAPIKeys(next)
 		if err != nil {
 			httputil.WriteJSON(w, http.StatusInternalServerError, map[string]any{
@@ -1105,6 +1138,7 @@ func (s *Server) clientConfigPayload(publicOrigin string) map[string]any {
 	for _, binding := range cfg.APIKeys {
 		bound = append(bound, map[string]any{
 			"site":       binding.Site,
+			"accountId":  binding.AccountID,
 			"preview":    strutil.MaskSecret(binding.Key, 6),
 			"configured": true,
 			"key":        binding.Key,

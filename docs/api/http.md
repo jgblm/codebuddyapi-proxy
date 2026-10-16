@@ -164,6 +164,10 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 
 错误形态为 Responses 风格 `{"error":{"code":"...","message":"..."}}`。
 
+图片支持：`message.content` 中的 `input_image` 转为 Chat 的 `image_url` 内容块；`function_call_output.output` 接受带图片的结构化数组，也识别工具将该数组编码成 JSON 字符串的形态。保留文本和 `tool_call_id` 关联，图片放在同组连续工具结果全部结束后的 user 消息中，避免把图片 base64 当普通文本计入上下文，或在并行工具回执中间插入用户消息。普通 JSON 工具输出不做图片协议推断。
+
+图片内容由上游验证；代理不下载远程 URL，也不全量解码图片。模型必须支持视觉，超出上游图片或上下文限制仍会返回错误，不保证任意载荷均可发送。
+
 ### `POST /v1/images/generations`
 
 别名：`POST /images/generations`
@@ -217,6 +221,8 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 | `tool_choice` | 对象型会被归一为 `auto` / `none` / `required` |
 
 请求头 `X-Site: domestic|global` 可覆盖默认区域（模型前缀优先）。网关 Key 也可绑定区域（见 `CODEBUDDY_PROXY_API_KEYS`）。同一进程可同时持有国内号和国际号，不必再为两区域各开一个进程。
+
+固定账号 Key（`cbp_xxx:account=<id>`）例外：区域由绑定账号推导，模型前缀或请求头不能跨区覆盖。冲突返回 400，绑定账号不存在或不可用返回 503。固定账号优先于会话钉号，失败不换号；Chat、Responses、Images 使用同一约束。
 
 `GET /v1/models` 只返回**当前请求区域**的无前缀模型 ID（`X-Site` > Key 绑定 > `CODEBUDDY_SITE`），不再注入 `cn:` / `global:` 别名。聊天请求仍可手写带前缀的模型名。
 
@@ -398,6 +404,10 @@ usage chunk 形如：
 launch / callback 均设 Cookie `cursor_codebuddy_oauth=<token>`（`HttpOnly`、`SameSite=Lax`、`Max-Age=900`）。
 
 ### 用量与明细
+
+套餐明细位于单账号 usage 的 `credits.packages[]`；`cycleEndTime` 保留上游原文，新增 `expiresAt` 为绝对时间的 Unix 毫秒（未知时省略），无时区字符串按 UTC+08:00 解析。`quota.checkedAt` 是本次快照时间。管理台明细按到期时间排序并展示近期到期额度；接口查询有效套餐，不保证完整的过期历史包。
+
+绑定 Key 管理：`POST /direct-admin/api/client-config/bound-keys` 接受 `{"site":"domestic"}` 或 `{"accountId":"..."}`；后者从账号推导区域，同时给出 `site` 时必须一致。配置回显的绑定项包含 `accountId`。账号必须存在、启用且有凭据，创建失败不会落盘。
 
 `GET /direct-admin/api/usage`
 

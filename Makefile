@@ -33,6 +33,9 @@ release:
 	@mkdir -p releases
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-windows-x64.exe ./cmd/codebuddy-proxy
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-linux-amd64 ./cmd/codebuddy-proxy
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-linux-arm64 ./cmd/codebuddy-proxy
+	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-linux-armv7 ./cmd/codebuddy-proxy
+	GOOS=linux GOARCH=arm GOARM=6 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-linux-armv6 ./cmd/codebuddy-proxy
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-darwin-arm64 ./cmd/codebuddy-proxy
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o releases/codebuddy-proxy-darwin-amd64 ./cmd/codebuddy-proxy
 	cp .env.example releases/.env.example

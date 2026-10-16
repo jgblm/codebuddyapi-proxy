@@ -66,6 +66,10 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request, keySite
 	proxyRequestID := s.newProxyRequestID()
 	finish := s.Svc.BeginRequest(providerModel.PublicModel, promptChars, req.Stream)
 	site := resolveRequestSite(providerModel.Site, r.Header.Get("X-Site"), keySite)
+	if !boundSiteAllowed(w, r, site) {
+		finish(false, 0, 0, 0, 0, "请求区域与绑定账号不一致", provider.Usage{})
+		return
+	}
 
 	// session 钉号：Codex 传 prompt_cache_key，或按消息指纹。
 	sessionKey := sessionpin.Key(r.Header, req.PromptCacheKey, messages)
@@ -74,6 +78,8 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request, keySite
 	}
 
 	completeOpts := gateway.CompleteOptions{
+		AccountID:           requestBinding(r).AccountID,
+		FixedAccount:        requestBinding(r).AccountID != "",
 		Model:               providerModel.Model,
 		Messages:            messages,
 		Tools:               tools,
