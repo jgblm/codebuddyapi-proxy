@@ -74,16 +74,21 @@ func (s *Server) handleImages(w http.ResponseWriter, r *http.Request, keySite st
 	}
 	providerModel := gateway.ResolveProviderModel(body.Model)
 	site := resolveRequestSite(providerModel.Site, r.Header.Get("X-Site"), keySite)
+	if !boundSiteAllowed(w, r, site) {
+		return
+	}
 	completeOpts := gateway.CompleteOptions{Model: providerModel.Model, Site: site}
 	started := time.Now()
 	proxyRequestID := s.newProxyRequestID()
 	finish := s.Svc.BeginRequest(providerModel.PublicModel, len(prompt), false)
 	result, err := s.Svc.ImageFromPool(r.Context(), gateway.ImageOptions{
-		Site:      site,
-		Model:     providerModel.Model,
-		Prompt:    prompt,
-		ImageURLs: urls,
-		ImageData: data,
+		AccountID:    requestBinding(r).AccountID,
+		FixedAccount: requestBinding(r).AccountID != "",
+		Site:         site,
+		Model:        providerModel.Model,
+		Prompt:       prompt,
+		ImageURLs:    urls,
+		ImageData:    data,
 	})
 	if err != nil {
 		if openai.IsClientCanceled(err) {

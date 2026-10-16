@@ -8,7 +8,7 @@ import (
 // UIRevision is the admin console markup/script stamp. Bump it on every
 // meaningful change to PageHTML so operators can tell the rebuilt binary
 // carries the new UI (independent of the release tag injected via ldflags).
-const UIRevision = "2026.09.23-status-pills"
+const UIRevision = "2026.10.16-expiry-account-keys"
 
 func PageHTML() string {
 	return `<!doctype html>
@@ -570,6 +570,9 @@ pre{
               <option value="domestic">国内 domestic</option>
               <option value="global">国际 global</option>
             </select>
+            <select id="boundKeyAccount" aria-label="绑定账号">
+              <option value="">区域内自动选号</option>
+            </select>
             <button class="teal" id="btnNewBoundKey" type="button">新建绑定 Key</button>
           </div>
         </div>
@@ -779,9 +782,56 @@ function formatResetAt(ms){
 }
 
 const usageByAccount = {};
+// 套餐时间由后端按北京时间解析为毫秒；前端只显示绝对时间，不解析无时区字符串。
+function packageExpiryView(usage, now){
+  const packages = ((usage.credits || {}).packages || []).slice().sort(function(a,b){
+    return (a.expiresAt || Infinity) - (b.expiresAt || Infinity);
+  });
+  let expiring = 0, amount = 0, remaining = 0;
+  const rows = packages.map(function(p){
+    const expiry = Number(p.expiresAt) || 0;
+    const left = Number(p.remaining);
+    if (Number.isFinite(left) && left > 0) remaining += left;
+    const delta = expiry - now;
+    let label = '到期未知', level = 'muted';
+    if (expiry && delta <= 0) { label = '已过期'; level = 'bad'; }
+    else if (expiry && delta <= 86400000) { label = '24h 内'; level = 'bad'; }
+    else if (expiry && delta <= 3*86400000) { label = '3 天内'; level = 'warn'; }
+    else if (expiry && delta <= 7*86400000) { label = '7 天内'; level = 'warn'; }
+    else if (expiry) label = '有效';
+    if (expiry && delta > 0 && delta <= 7*86400000 && Number.isFinite(left) && left > 0) {
+      expiring++; amount += left;
+    }
+    const number = function(value){ return value == null ? '未知' : (Number(value) === -1 ? '不限量' : String(value)); };
+    return '<tr><td>' + escapeHtml(expiry ? new Date(expiry).toLocaleString() : '未知') +
+      '</td><td><span class="pill ' + level + '">' + label + '</span></td><td>' +
+      escapeHtml(p.packageName || '未命名套餐') + '</td><td>' + escapeHtml(number(p.remaining) + ' / ' + number(p.total)) +
+      '</td><td>' + escapeHtml(number(p.used)) + '</td></tr>';
+  }).join('');
+  const checked = usage.quota && usage.quota.checkedAt;
+  return '<details class="package-expiry"><summary>积分到期明细 · ' + packages.length + ' 包 · 快照剩余 ' + escapeHtml(remaining.toFixed(2)) + ' 分 · 未来 7 天 ' +
+    expiring + ' 包 / ' + escapeHtml(amount.toFixed(2)) + ' 分</summary><p class="meta">余额为查询快照，非实时；数据时间：' +
+    escapeHtml(checked ? new Date(checked).toLocaleString() : '未知') +
+    '。到期时间按浏览器本地时区显示。</p><div style="overflow-x:auto"><table><thead><tr>' +
+    '<th>到期时间</th><th>状态</th><th>套餐</th><th>剩余 / 总量</th><th>已用</th></tr></thead><tbody>' +
+    (rows || '<tr><td colspan="5">暂无套餐明细，已过期历史包可能不在上游有效套餐接口中。</td></tr>') +
+    '</tbody></table></div></details>';
+}
+
 function renderAccounts(summary, activeSite) {
   const box = $('accounts');
   const all = (summary && summary.accounts) || [];
+  const expanded = new Set(Array.from(box.querySelectorAll('.package-expiry[open]')).map(function(d){ return d.closest('.account').getAttribute('data-account-id'); }));
+  const accountSelect = $('boundKeyAccount');
+  if (accountSelect) {
+    const selected = accountSelect.value;
+    accountSelect.innerHTML = '<option value="">区域内自动选号</option>' + all.filter(function(a){
+      return a.enabled && a.hasCredentials;
+    }).map(function(a){
+      return '<option value="' + escapeHtml(a.id) + '">' + escapeHtml((a.label || a.id) + ' · ' + siteLabel(a.site)) + '</option>';
+    }).join('');
+    accountSelect.value = selected;
+  }
   activeSite = normalizeSite(activeSite || (summary && summary.activeSite) || '');
   if (!all.length) {
     box.innerHTML = '<div class="empty">暂无账号。请先在下方完成 OAuth 登录。</div>';
@@ -826,8 +876,9 @@ function renderAccounts(summary, activeSite) {
       usageHtml = '<div class="usage-line"><span class="pill ' + level + '">' + escapeHtml(remaining + ' / ' + total) + ' Credits</span> ' +
         '<button class="ghost" data-act="usage" data-id="' + escapeHtml(a.id) + '" type="button">刷新余额</button> ' +
         '<a href="' + escapeHtml(usage.officialUsageUrl || 'https://www.codebuddy.cn/profile/plan') + '" target="_blank" rel="noreferrer">官网套餐</a></div>';
+      usageHtml += packageExpiryView(usage, Date.now());
     }
-    return '<div class="account">' +
+    return '<div class="account" data-account-id="' + escapeHtml(a.id) + '">' +
       '<div class="account-top">' +
         '<div class="account-title">' +
           '<strong>' + label + '</strong>' +
@@ -854,6 +905,7 @@ function renderAccounts(summary, activeSite) {
       (a.lastError ? ('<div class="err">' + escapeHtml(a.lastError) + '</div>') : '') +
     '</div>';
   }).join('');
+  box.querySelectorAll('.package-expiry').forEach(function(d){ d.open = expanded.has(d.closest('.account').getAttribute('data-account-id')); });
   box.querySelectorAll('button[data-act]').forEach(function(btn){ btn.addEventListener('click', onAccountAction); });
 }
 
@@ -1352,7 +1404,7 @@ function renderBoundApiKeys(list){
     const key = String(item.key || '');
     return '<div class="bound-key">' +
       '<div class="meta"><span class="mono">' + preview + '</span>' +
-        '<span class="badge site">' + escapeHtml(siteLabel(site)) + '</span></div>' +
+        '<span class="badge site">' + escapeHtml(item.accountId ? ('固定账号 ' + item.accountId) : siteLabel(site)) + '</span></div>' +
       '<div class="actions">' +
         '<button class="ghost" data-act="copy-bound" data-key="' + escapeHtml(key) + '" type="button">复制</button>' +
         '<button class="danger" data-act="delete-bound" data-key="' + escapeHtml(key) + '" type="button">删除</button>' +
@@ -1378,9 +1430,11 @@ async function onBoundKeyAction(ev){
 }
 async function generateBoundKey(){
   const site = $('boundKeySite') ? $('boundKeySite').value : 'global';
-  const data = await api('/direct-admin/api/client-config/bound-keys', {method:'POST', body: JSON.stringify({site:site})});
+  const accountId = $('boundKeyAccount') ? $('boundKeyAccount').value : '';
+  const binding = accountId ? {accountId:accountId} : {site:site};
+  const data = await api('/direct-admin/api/client-config/bound-keys', {method:'POST', body: JSON.stringify(binding)});
   paintClientConfig(data);
-  const created = (data.apiKeys || []).filter(function(item){ return item && item.key && item.site === normalizeSite(site); }).pop();
+  const created = (data.apiKeys || []).filter(function(item){ return item && item.key && (accountId ? item.accountId === accountId : !item.accountId && item.site === normalizeSite(site)); }).pop();
   if (created && created.key) await copyText(created.key, '绑定 Key', $('btnNewBoundKey'));
   if (data.note) showToast(data.note);
 }

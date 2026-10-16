@@ -347,16 +347,20 @@ func TestDailyCheckinForAccountFetchErrorIsFailedNotUnsupported(t *testing.T) {
 }
 
 func TestRunPoolCheckinFiltersByPoolSite(t *testing.T) {
+	// 区域筛选测试使用确定性失败响应，不用 1 纳秒超时制造平台相关的竞态。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"code":401,"msg":"unauthorized"}`))
+	}))
+	defer srv.Close()
 	client := provider.NewClient(config.Config{})
 	store := accounts.Store{
 		Accounts: []accounts.Account{
-			testCheckinAccountWithID("http://unused", "domestic", "domestic-1"),
-			testCheckinAccountWithID("http://unused", "global", "global-1"),
+			testCheckinAccountWithID(srv.URL, "domestic", "domestic-1"),
+			testCheckinAccountWithID(srv.URL, "global", "global-1"),
 		},
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 1)
-	defer cancel()
-	out := RunPoolCheckin(ctx, client, store, config.Config{}, "domestic")
+	out := RunPoolCheckin(t.Context(), client, store, config.Config{}, "domestic")
 	if out.Summary.Total != 1 {
 		t.Fatalf("summary=%+v", out.Summary)
 	}
@@ -364,7 +368,7 @@ func TestRunPoolCheckinFiltersByPoolSite(t *testing.T) {
 		t.Fatalf("results=%+v", out.Results)
 	}
 	if out.Summary.Failed != 1 || out.Summary.Unsupported != 0 {
-		t.Fatalf("timeout should count as failed: %+v", out.Summary)
+		t.Fatalf("被尝试的失败请求应计入失败: %+v", out.Summary)
 	}
 }
 

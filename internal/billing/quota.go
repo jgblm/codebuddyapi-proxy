@@ -208,7 +208,8 @@ func ParseBillingTimeMillis(raw string) int64 {
 var billingLocalLocation = sync.OnceValue(func() *time.Location {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
-		return time.Local
+		// 精简系统与路由器可能没有时区数据库，上游无时区时间仍必须按北京时间解析。
+		return time.FixedZone("UTC+08:00", 8*60*60)
 	}
 	return loc
 })

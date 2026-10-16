@@ -243,6 +243,7 @@ func ResolveProviderModel(model string) ProviderModel {
 
 type CompleteOptions struct {
 	AccountID           string
+	FixedAccount        bool // API Key 的硬约束，不允许清钉或换号降级
 	SessionKey          string
 	SessionLabel        string
 	Site                string // 本请求号池区域；空则回落进程默认 SITE
@@ -273,6 +274,7 @@ type ImageOptions struct {
 	ImageURLs    []string
 	ImageData    []string
 	AccountID    string
+	FixedAccount bool
 	ExcludeIDs   []string
 	RefreshRetry bool
 	RetryDepth   int
@@ -350,6 +352,9 @@ func SessionPinKey(session, site string) string {
 }
 
 func (s *Service) CompleteFromPool(ctx context.Context, opts CompleteOptions) (CompleteResult, error) {
+	if opts.FixedAccount && opts.AccountID == "" {
+		return CompleteResult{}, errors.New("固定账号请求缺少账号约束")
+	}
 	if opts.RetryDepth >= defaultMaxAccountRetries {
 		return CompleteResult{}, fmt.Errorf("%w（max=%d）", errRetryDepthExceeded, defaultMaxAccountRetries)
 	}
@@ -377,7 +382,7 @@ func (s *Service) CompleteFromPool(ctx context.Context, opts CompleteOptions) (C
 	if err != nil {
 		// 会话钉号与当前 SITE 不符时 Select 会早退；此处 Forget + 清 AccountID 重入，
 		// 对齐 reRetryNextAccount 对 site mismatch 的换号自愈意图。
-		if opts.AccountID != "" && isPinnedAccountUnusable(err) {
+		if !opts.FixedAccount && opts.AccountID != "" && isPinnedAccountUnusable(err) {
 			staleID := opts.AccountID
 			if pinKey != "" {
 				s.Pins.Forget(pinKey)
@@ -520,6 +525,9 @@ func (s *Service) shouldRefreshAfterFailure(err error, selection accounts.Select
 }
 
 func (s *Service) shouldRetryNextAccount(err error, selection accounts.Selection, opts CompleteOptions) bool {
+	if opts.FixedAccount {
+		return false
+	}
 	if selection.Account.ID == "" {
 		return false
 	}

@@ -81,6 +81,8 @@ kiro-proxy 已发布
 |------|------|
 | **Windows 64 位** | `codebuddy-proxy-windows-x64.exe` |
 | Linux 64 位 | `codebuddy-proxy-linux-amd64` |
+| Linux ARM64 | `codebuddy-proxy-linux-arm64` |
+| Linux ARMv7 / ARMv6 | `codebuddy-proxy-linux-armv7` / `codebuddy-proxy-linux-armv6` |
 | macOS Apple 芯片 | `codebuddy-proxy-darwin-arm64` |
 | macOS Intel | `codebuddy-proxy-darwin-amd64` |
 
@@ -185,6 +187,10 @@ CODEBUDDY_PRODUCT=codebuddy      # 或 workbuddy
 ```
 
 完整变量见 [配置参考](docs/guides/configuration.md)。
+
+v0.5.6 起支持 `CODEBUDDY_PROXY_API_KEYS=cbp_fixed:account=<账号id>` 固定账号。账号不可用或区域冲突会明确报错，不自动换号。管理台可选账号创建 Key，并在账号余额下展开积分到期明细（显示快照时间与 7 天内到期额度）。
+
+Responses 图片和工具截图按结构化图片发送，不再把 base64 当普通工具文本。具体承载方式及限制见 [HTTP API](docs/api/http.md)。
 
 ---
 

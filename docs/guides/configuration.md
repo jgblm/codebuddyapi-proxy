@@ -29,7 +29,7 @@
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `CODEBUDDY_PROXY_API_KEY` | 空 | 客户端主 Key。**留空且未配置 `CODEBUDDY_PROXY_API_KEYS` 时，首次启动自动生成 `cbp_...` 并写入 `~/.codebuddy/proxy.env`** |
-| `CODEBUDDY_PROXY_API_KEYS` | 空 | 多 Key 及可选区域绑定，例如 `cbp_aaa:global,cbp_bbb:domestic`。换 Key 等于换区。未写区域的 Key 只做鉴权。主 Key 也可出现在这张表里以绑定区域 |
+| `CODEBUDDY_PROXY_API_KEYS` | 空 | 多 Key 绑定区域或账号，例如 `cbp_aaa:global,cbp_bbb:domestic,cbp_fixed:account=<id>`。未写后缀只做鉴权；主 Key 也可出现在绑定表 |
 | `CODEBUDDY_PROXY_REQUIRE_API_KEY` | 跟随 API Key | `true` 时 `/v1` 强制鉴权。设了主 Key 或多 Key 就默认为 `true` |
 | `CODEBUDDY_PROXY_ADMIN_PASSWORD` | 空 | 管理台密码。**留空 = 管理台免密**（本地推荐），与 API Key 鉴权相互独立 |
 
@@ -40,6 +40,16 @@
 ```env
 CODEBUDDY_PROXY_API_KEYS=cbp_intl_xxx:global,cbp_cn_xxx:domestic
 ```
+
+固定账号示例：
+
+```env
+CODEBUDDY_PROXY_API_KEYS=cbp_fixed:account=<账号池中的id>
+```
+
+账号绑定优先于会话钉号，区域由账号自身推导，不受当前管理台号池区域影响。若模型区域前缀或 `X-Site` 与绑定账号冲突，返回 400；账号不存在、禁用或无凭据时返回 503，不静默回退到其他账号。上游 429 等失败也不换号，但可刷新同一账号的 OAuth 凭据。此约束对 Chat、Responses、Images 接口均生效。
+
+管理台“新建绑定 Key”可选择具体账号；未选择账号时保留原有区域绑定。`REQUIRE_API_KEY=false` 会跳过 API Key 鉴权及绑定，请勿用于需要账号隔离的部署。
 
 ## 账号池
 

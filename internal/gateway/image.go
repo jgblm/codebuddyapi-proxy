@@ -10,10 +10,12 @@ import (
 	"github.com/wnddd839/codebuddy-proxy/internal/provider"
 )
 
-// ImageFromPool selects an account and calls the upstream image endpoint.
-// Retry rules match chat: auth failures refresh the same account once;
-// 429/502/503/504 rotate accounts. Image requests are not session-pinned.
+// ImageFromPool 选号并调用出图接口；鉴权失败可刷新同号一次，临时故障可换号。
+// 固定账号 Key 禁止换号；普通出图请求不使用会话钉号。
 func (s *Service) ImageFromPool(ctx context.Context, opts ImageOptions) (ImageResult, error) {
+	if opts.FixedAccount && opts.AccountID == "" {
+		return ImageResult{}, errors.New("固定账号请求缺少账号约束")
+	}
 	if opts.RetryDepth >= defaultMaxAccountRetries {
 		return ImageResult{}, fmt.Errorf("%w（max=%d）", errRetryDepthExceeded, defaultMaxAccountRetries)
 	}
@@ -48,6 +50,7 @@ func (s *Service) ImageFromPool(ctx context.Context, opts ImageOptions) (ImageRe
 			return ImageResult{}, err
 		}
 		complete := CompleteOptions{
+			FixedAccount: opts.FixedAccount,
 			Site:         site,
 			Model:        opts.Model,
 			ExcludeIDs:   opts.ExcludeIDs,

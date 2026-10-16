@@ -45,6 +45,7 @@ type Package struct {
 	Used               *float64 `json:"used"`
 	CycleStartTime     string   `json:"cycleStartTime,omitempty"`
 	CycleEndTime       string   `json:"cycleEndTime,omitempty"`
+	ExpiresAt          int64    `json:"expiresAt,omitzero"` // 北京时间按绝对时间返回，避免浏览器按本地时区误读
 	SlicePeriodEndTime string   `json:"slicePeriodEndTime,omitempty"`
 }
 
@@ -292,6 +293,7 @@ func summarizeResourceAccounts(items []any) Credits {
 			Used:               usedAmount,
 			CycleStartTime:     strings.TrimSpace(fmt.Sprint(firstAny(item, "CycleStartTime", "cycleStartTime"))),
 			CycleEndTime:       strings.TrimSpace(fmt.Sprint(firstAny(item, "CycleEndTime", "cycleEndTime"))),
+			ExpiresAt:          ParseBillingTimeMillis(strings.TrimSpace(fmt.Sprint(firstAny(item, "CycleEndTime", "cycleEndTime")))),
 			SlicePeriodEndTime: slicePeriodEnd,
 		})
 	}

@@ -587,7 +587,11 @@ func EnsureUpstreamMessages(messages []map[string]any) []map[string]any {
 		if name, ok := message["name"]; ok {
 			item["name"] = name
 		}
-		item["content"] = flattenContent(message["content"])
+		if role == "tool" {
+			item["content"] = NormalizeToolOutput(message["content"])
+		} else {
+			item["content"] = normalizeContent(message["content"])
+		}
 		hasToolCalls := len(asAnySlice(item["tool_calls"])) > 0
 		if messageContentEmpty(item["content"]) && !hasToolCalls && item["tool_call_id"] == nil {
 			continue
@@ -600,7 +604,7 @@ func EnsureUpstreamMessages(messages []map[string]any) []map[string]any {
 		}
 		rest = append(rest, item)
 	}
-	rest = mergeConsecutiveToolAssistants(rest)
+	rest = PromoteToolImages(mergeConsecutiveToolAssistants(rest))
 	if len(instructions) == 0 {
 		return rest
 	}

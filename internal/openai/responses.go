@@ -3,6 +3,8 @@ package openai
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/wnddd839/codebuddy-proxy/internal/provider"
 )
 
 // ---------------------------------------------------------------------------
@@ -118,7 +120,7 @@ func (r *ResponsesRequest) ToMessages() (messages []map[string]any, tools any, t
 	}
 
 	toolChoice = normalizeResponsesToolChoice(r.ToolChoice)
-	return messages, tools, toolChoice
+	return provider.PromoteToolImages(messages), tools, toolChoice
 }
 
 // ReasoningEffort 提取 reasoning.effort，兼容缺省。
@@ -179,7 +181,7 @@ func appendItemAsMessages(messages []map[string]any, item ResponsesInputItem) []
 	case "function_call_output":
 		msg := map[string]any{
 			"role":    "tool",
-			"content": responsesOutputToText(item.Output),
+			"content": provider.NormalizeToolOutput(item.Output),
 		}
 		if item.CallID != "" {
 			msg["tool_call_id"] = item.CallID
@@ -223,6 +225,7 @@ func normalizeResponsesRole(role string) string {
 // responsesContentToChat 把 Responses message.content 转成 chat content。
 // user 侧输入多为 [{type:"input_text",text}]，assistant 侧为 [{type:"output_text",text}]。
 func responsesContentToChat(content any) any {
+	content = provider.ResponsesContent(content)
 	switch c := content.(type) {
 	case nil:
 		return nil
@@ -232,57 +235,7 @@ func responsesContentToChat(content any) any {
 		}
 		return c
 	}
-	raw, err := json.Marshal(content)
-	if err != nil {
-		return nil
-	}
-	var parts []map[string]any
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return nil
-	}
-	var sb strings.Builder
-	for _, part := range parts {
-		typ, _ := part["type"].(string)
-		text, _ := part["text"].(string)
-		switch strings.ToLower(typ) {
-		case "input_text", "output_text", "text", "refusal":
-			sb.WriteString(text)
-		case "input_image", "image_url":
-			// 上游不支持图像，忽略而非报错。
-		}
-	}
-	out := sb.String()
-	if strings.TrimSpace(out) == "" {
-		return nil
-	}
-	return out
-}
-
-// responsesOutputToText 把 function_call_output.output 归一化为字符串。
-func responsesOutputToText(output any) string {
-	switch o := output.(type) {
-	case nil:
-		return ""
-	case string:
-		return o
-	}
-	raw, err := json.Marshal(output)
-	if err != nil {
-		return ""
-	}
-	var parts []map[string]any
-	if err := json.Unmarshal(raw, &parts); err == nil {
-		var sb strings.Builder
-		for _, part := range parts {
-			if text, ok := part["text"].(string); ok {
-				sb.WriteString(text)
-			}
-		}
-		if sb.Len() > 0 {
-			return sb.String()
-		}
-	}
-	return string(raw)
+	return content
 }
 
 // MaxTokens 提取 max_output_tokens。
