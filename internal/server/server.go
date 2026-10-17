@@ -59,6 +59,12 @@ func New(cfg config.Config, svc *gateway.Service) *Server {
 	mux.HandleFunc("POST /images/generations", s.handleImagesAuth)
 	mux.HandleFunc("POST /v1/images/edits", s.handleImageEditsAuth)
 	mux.HandleFunc("POST /images/edits", s.handleImageEditsAuth)
+	mux.HandleFunc("POST /v1/search", s.handleSearchAuth)
+	mux.HandleFunc("POST /search", s.handleSearchAuth)
+	mux.HandleFunc("POST /v1/webfetch", s.handleWebFetchAuth)
+	mux.HandleFunc("POST /webfetch", s.handleWebFetchAuth)
+	mux.HandleFunc("POST /v1/agentic_search", s.handleAgenticSearchAuth)
+	mux.HandleFunc("POST /agentic_search", s.handleAgenticSearchAuth)
 	mux.HandleFunc("GET /direct-admin", s.handleAdminPage)
 	mux.HandleFunc("GET /direct-admin/{$}", s.handleAdminPage)
 	mux.HandleFunc("HEAD /direct-admin", s.handleAdminPage)
@@ -324,6 +330,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request, k
 		StreamOptions       *streamOptions   `json:"stream_options"`
 		Tools               any              `json:"tools"`
 		ToolChoice          any              `json:"tool_choice"`
+		WebSearchOptions    *struct{}        `json:"web_search_options"`
 		Temperature         *float64         `json:"temperature"`
 		TopP                *float64         `json:"top_p"`
 		MaxTokens           *int             `json:"max_tokens"`
@@ -340,6 +347,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request, k
 			return
 		}
 		httputil.WriteJSON(w, http.StatusBadRequest, openai.NewError("Invalid JSON body", "invalid_request_error"))
+		return
+	}
+	tools, searchRequested, err := openai.ChatSearchTools(body.Tools, body.WebSearchOptions != nil, body.ToolChoice)
+	if err != nil {
+		httputil.WriteJSON(w, http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error"))
 		return
 	}
 	providerModel := gateway.ResolveProviderModel(body.Model)
@@ -364,7 +376,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request, k
 		FixedAccount:        requestBinding(r).AccountID != "",
 		Model:               providerModel.Model,
 		Messages:            body.Messages,
-		Tools:               body.Tools,
+		Tools:               tools,
 		ToolChoice:          body.ToolChoice,
 		Temperature:         body.Temperature,
 		TopP:                body.TopP,
@@ -378,12 +390,12 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request, k
 	}
 
 	if body.Stream {
-		s.streamChat(w, r, providerModel, completeOpts, chatStarted, proxyRequestID, resolveIncludeUsage(body.StreamOptions), finish)
+		s.streamChat(w, r, providerModel, completeOpts, chatStarted, proxyRequestID, resolveIncludeUsage(body.StreamOptions), searchRequested, finish)
 		return
 	}
 
 	completeOpts.Stream = false
-	result, err := s.Svc.CompleteFromPool(r.Context(), completeOpts)
+	result, err := s.completeWithRequestedSearch(r.Context(), completeOpts, searchRequested)
 	if err != nil {
 		if openai.IsClientCanceled(err) {
 			// 客户端在非流式聚合前/中主动断开，不算网关故障。
@@ -410,6 +422,7 @@ func (s *Server) streamChat(
 	chatStarted time.Time,
 	proxyRequestID string,
 	includeUsage bool,
+	searchRequested bool,
 	finish func(bool, int, int64, int64, int64, string, provider.Usage),
 ) {
 	sse, ok := httputil.NewSSEStream(w, 16<<10)
@@ -524,7 +537,7 @@ func (s *Server) streamChat(
 			_ = sse.WriteEvent(openai.StreamChunkOf(id, providerModel.PublicModel, openai.Delta{ReasoningContent: delta}, nil))
 		})
 	}
-	result, err := s.Svc.CompleteFromPool(ctx, opts)
+	result, err := s.completeWithRequestedSearch(ctx, opts, searchRequested)
 	if err != nil {
 		if openai.IsClientCanceled(err) {
 			// ZCode/浏览器常因慢模型（hy4-preview）中止并重试——

@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if ($Version -notmatch '^v\d+\.\d+\.\d+(?:\.\d+)?$') {
+if ($Version -notmatch '^v\d+\.\d+(?:\.\d+){0,2}$') {
     throw '版本号必须是 v 开头的数字版本。'
 }
 $root = Split-Path -Parent $PSScriptRoot

@@ -95,6 +95,12 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request, keySite
 
 	responseID := "resp_" + strutil.RandomHex(12)
 
+	// 内置 web_search：上游 chat 不认该工具，由代理在服务端执行搜索并按需多轮闭环。
+	if req.HasBuiltinWebSearch() {
+		s.handleResponsesWithSearch(w, r, &req, responseID, providerModel, completeOpts, chatStarted, proxyRequestID, finish)
+		return
+	}
+
 	if req.Stream {
 		s.streamResponses(w, r, &req, responseID, providerModel, completeOpts, chatStarted, proxyRequestID, finish)
 		return
@@ -258,7 +264,7 @@ func (s *Server) streamResponses(
 		})
 	}
 
-	result, err := s.Svc.CompleteFromPool(ctx, opts)
+	result, err := s.completeWithRequestedSearch(ctx, opts, req.HasBuiltinWebSearch())
 	if err != nil {
 		if openai.IsClientCanceled(err) {
 			s.recordChatJournal(chatStarted, proxyRequestID, opts, providerModel.PublicModel, true, true, "", provider.Usage{}, nil)

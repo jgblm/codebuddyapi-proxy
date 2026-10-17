@@ -47,7 +47,7 @@ CODEBUDDY_PROXY_API_KEYS=cbp_intl_xxx:global,cbp_cn_xxx:domestic
 CODEBUDDY_PROXY_API_KEYS=cbp_fixed:account=<账号池中的id>
 ```
 
-账号绑定优先于会话钉号，区域由账号自身推导，不受当前管理台号池区域影响。若模型区域前缀或 `X-Site` 与绑定账号冲突，返回 400；账号不存在、禁用或无凭据时返回 503，不静默回退到其他账号。上游 429 等失败也不换号，但可刷新同一账号的 OAuth 凭据。此约束对 Chat、Responses、Images 接口均生效。
+账号绑定优先于会话钉号，区域由账号自身推导，不受当前管理台号池区域影响。若模型区域前缀或 `X-Site` 与绑定账号冲突，返回 400；账号不存在、禁用或无凭据时返回 503，不静默回退到其他账号。上游 429 等失败也不换号，但可刷新同一账号的 OAuth 凭据。此约束对 Chat、Responses、Images、搜索与网页抓取接口均生效，包括 Responses 内置搜索触发的内部调用。
 
 管理台“新建绑定 Key”可选择具体账号；未选择账号时保留原有区域绑定。`REQUIRE_API_KEY=false` 会跳过 API Key 鉴权及绑定，请勿用于需要账号隔离的部署。
 

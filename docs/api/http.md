@@ -151,6 +151,7 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 
 - `input`（字符串或 item 数组：`message` / `function_call` / `function_call_output`；`reasoning` item 接收但不回放）、`instructions`（→ system 消息）、`developer` role（→ `system`）。历史 `function_call` / `function_call_output` 译成 chat 的 `assistant.tool_calls` + `tool`，与上游配对。
 - `tools`（Responses 扁平形态 `{type:"function", name, parameters}` 与 chat 嵌套形态均可）、`tool_choice`（`auto`/`none`/`required`/`{type:"function",name}`）
+- **内置 `web_search` / `web_search_preview`**：代理把工具桥接成保留内部名称的 function，避免与客户端自己定义的 `web_search` function 冲突；服务端用当前账号的官方搜索接口执行并回填结果，默认只执行一轮搜索。
 - `reasoning.effort`、`max_output_tokens`、`temperature`、`top_p`、`prompt_cache_key`（→ 会话钉号；同会话同时复用上游 `X-Conversation-ID`）
 - 非流式：返回完整 `response` 对象（`output[]` 含 `reasoning` / `message` / `function_call` item + `usage`）
 - 流式：命名 SSE 事件（`event: response.output_text.delta` 等），完整生命周期 `response.created → output_item.added → *.delta → output_item.done → response.completed`，含 `response.reasoning_summary_text.delta`（思考）与 `response.function_call_arguments.delta/done`（工具调用），`sequence_number` 单调递增
@@ -159,8 +160,29 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 
 - `background: true` → `400`
 - `previous_response_id` / `item_reference` / `store`：无服务端状态存储，不回放历史 output；`previous_response_id` 在缺少 `prompt_cache_key` 时仅用作会话钉键（Codex `store:false` 本就不依赖服务端存储）
-- `web_search` / `file_search` 等内置工具：静默丢弃
+- `file_search` / `computer_use` 等其他内置工具：静默丢弃
 - 图像输入（`input_image`）：忽略
+
+#### 内置联网搜索
+
+调用链：**模型发起 `web_search` → 代理用当前账号的官方 `/agenttool/v1/search` 检索 → 结果作为工具回执回填 → 模型作答**。
+
+- 只对声明了 `{"type":"web_search"}`（或 `web_search_preview`）的请求生效；没有声明时完全不触发。
+- `tool_choice: "none"` 优先，即使声明了内置搜索也不提供或执行搜索工具。
+- 搜索使用当前请求区域的账号池 token，沿用账号的官方搜索配额及计费规则。`15001` 为搜索配额相关错误；尚未进行账单前后对账，不据此推定单次积分扣费。代理不接独立的第三方搜索服务。
+- 每次请求最多执行一轮搜索，回填后第二次模型调用会移除 `web_search` 工具，避免重复扣费与死循环。
+- 模型在同一轮里同时调用 `web_search` 与客户端 function 时，代理只执行搜索；客户端 function 调用会被丢弃，模型可在拿到搜索结果后重新发起。
+- 搜索失败不会让整轮对话失败：错误文本会作为工具回执回填，由模型决定改述或放弃。
+- `stream=true` 会立即发送 created/in_progress 和保活；最终模型答案仍先聚合后以 SSE 回放，不是逐 token 实时转发。返回的模型 usage 汇总首轮及回填后的末轮；上游缺失的搜索 Credit 不估算。
+
+```json
+{
+  "model": "auto",
+  "input": "今天有什么值得关注的科技新闻？",
+  "tools": [{"type": "web_search"}],
+  "stream": false
+}
+```
 
 错误形态为 Responses 风格 `{"error":{"code":"...","message":"..."}}`。
 
@@ -195,6 +217,94 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 
 缺参考图返回 `400`。响应形状与 generations 相同。
 
+### `POST /v1/search`
+
+别名：`POST /search`
+
+官方关键词搜索。上游 `POST /agenttool/v1/search`，使用账号池中当前区域账号的 OAuth token，沿用官方账号的搜索配额及计费规则；单次积分扣费尚未做账单对账。
+
+```json
+{
+  "model": "auto",
+  "query": "腾讯 2026 第三季度 财报",
+  "max_results": 5,
+  "allowed_domains": ["tencent.com"],
+  "freshness": "m3"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `query` | 必填，非空搜索词 |
+| `max_results` | 可选，`1`–`50`，缺省上游默认 `5` |
+| `allowed_domains` | 可选，域名白名单 |
+| `blocked_domains` | 可选，代理按官方客户端行为拼成 `-site:` 排除项 |
+| `freshness` | 可选，`d1`–`d30` / `m1`–`m12` / `y1`–`y5` |
+| `model` / `X-Site` | 与 chat 相同的区域选择；实际不切换模型 |
+
+成功响应：
+
+```json
+{
+  "object": "search.result",
+  "query": "腾讯 2026 第三季度 财报",
+  "search_type": "text2text",
+  "provider": "0",
+  "results": [
+    {"title": "…", "url": "https://…", "snippet": "…"}
+  ],
+  "total_results": 1,
+  "response_time_ms": 1234
+}
+```
+
+### `POST /v1/webfetch`
+
+别名：`POST /webfetch`
+
+官方网页正文抓取。上游 `POST /agenttool/v1/webfetch`，由上游取页并转 Markdown，代理只校验 `http://` / `https://`，不本地代理任意 URL。
+
+```json
+{
+  "url": "https://www.tencent.com/zh-cn/investors.html",
+  "prompt": "总结这家公司的投资者关系页面",
+  "format": "markdown",
+  "timeout": 20,
+  "max_length": 100000
+}
+```
+
+成功响应：
+
+```json
+{
+  "object": "web.fetch",
+  "url": "https://…",
+  "title": "…",
+  "content": "…",
+  "content_type": "text/markdown",
+  "content_length": 1370,
+  "truncated": false,
+  "status_code": 200
+}
+```
+
+### `POST /v1/agentic_search`
+
+别名：`POST /agentic_search`
+
+官方多步研究代理。上游 `POST /agenttool/v1/agentic_search`（SSE，`search_mode=2`），官方客户端将其定位为金融/投资研究，非金融主题效果不保证。上游自主调用取数/搜索工具并输出综合结论，沿用官方配额及计费规则，延迟明显高于 `/v1/search`。
+
+```json
+{"query": "研究 A 股腾讯整体情况", "stream": false}
+```
+
+- `stream=false`（默认）：聚合后返回 `{"object":"agentic_search.result","query":"…","content":"…","events":[…]}`。
+- `stream=true`：转发进度事件（`iteration` / `tool_call` / `tool_result` / `synthesis_delta`）；上游 `done` 的最终全文归一为一次 `synthesis`，再发送 `data: [DONE]`。
+- 单次请求上游兜底超时 5 分钟。
+
+错误仍为 OpenAI 风格 `{"error":{"message":"…","type":"…"}}`；上游配额不足常见 `15001`。
+
 ### `POST /v1/chat/completions`
 
 别名：`POST /chat/completions`
@@ -219,6 +329,25 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 | `stream_options.include_usage` | 缺省按 `true` 推送空 `choices` 的 usage 收尾 chunk；显式 `false` 跳过 |
 | `max_tokens` / `max_completion_tokens` | 二者取正数，后者优先 |
 | `tool_choice` | 对象型会被归一为 `auto` / `none` / `required` |
+| `web_search_options` | 非 null 对象（推荐 `{}`）显式启用官方搜索桥接；省略 / null 不开启，`tool_choice:"none"` 优先关闭。目前仅作为启用声明，不解释其子字段 |
+
+#### Chat 显式联网搜索
+
+```json
+{
+  "model": "auto",
+  "messages": [{"role":"user","content":"搜索 Go 最新版本发布说明，并附来源链接"}],
+  "web_search_options": {},
+  "stream": true
+}
+```
+
+Chat 也接受扩展 `tools:[{"type":"web_search"}]` / `web_search_preview`，
+但普通客户端自定义 function（包括名为 `web_search` 的 function）仍交由客户端执行。
+代理内部执行一轮官方检索并把结果回填模型，下游接收普通 Chat answer/chunks，
+无需自行执行内部搜索工具。流式首帧和保活立即发送，最终答案聚合后回放。
+不声明搜索的请求保持原有行为，不调用官方搜索接口。
+完整客户端配置及中转字段透传说明见 [下游搜索接入](../guides/search.md)。
 
 请求头 `X-Site: domestic|global` 可覆盖默认区域（模型前缀优先）。网关 Key 也可绑定区域（见 `CODEBUDDY_PROXY_API_KEYS`）。同一进程可同时持有国内号和国际号，不必再为两区域各开一个进程。
 

@@ -20,3 +20,18 @@ docs/review/
 
 # local-only agent scratch (never publish)
 .tmp/
+
+# local development workflows, design notes, and stale working copies
+.cursor/
+.factory/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+design/
+docs/standards/
+docs/superpowers/
+go-codebuddy/
+
+# runtime credentials and usage data
+proxy-accounts*.json
+proxy-usage*.json

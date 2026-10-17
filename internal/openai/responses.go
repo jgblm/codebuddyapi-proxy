@@ -108,11 +108,18 @@ func (r *ResponsesRequest) ToMessages() (messages []map[string]any, tools any, t
 
 	if len(r.Tools) > 0 {
 		chatTools := make([]map[string]any, 0, len(r.Tools))
+		searchAdded := false
 		for _, t := range r.Tools {
+			if t.IsBuiltinWebSearch() {
+				if SearchDisabled(r.ToolChoice) || searchAdded {
+					continue
+				}
+				searchAdded = true
+			}
 			if fn := t.toChatTool(); fn != nil {
 				chatTools = append(chatTools, fn)
 			}
-			// 内置工具（web_search 等）上游不支持，静默丢弃。
+			// 其他尚未支持的内置工具不会转给上游。
 		}
 		if len(chatTools) > 0 {
 			tools = chatTools
@@ -246,6 +253,58 @@ func (r *ResponsesRequest) MaxTokens() int {
 	return 0
 }
 
+// BuiltinWebSearchToolName 是代理在 Chat / Responses 显式搜索声明与上游
+// chat function 工具之间使用的桥接名称。
+const BuiltinWebSearchToolName = "buddy_proxy_builtin_web_search"
+
+// IsBuiltinWebSearch 报告该 tool 是否为 OpenAI 内置联网搜索工具。
+// Codex 等客户端使用 type=web_search；部分版本用 web_search_preview。
+func (t ResponsesTool) IsBuiltinWebSearch() bool {
+	if t.Function != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(t.Type)) {
+	case "web_search", "web_search_preview":
+		return true
+	}
+	return false
+}
+
+// HasBuiltinWebSearch 报告请求是否要求代理执行内置联网搜索。
+func (r *ResponsesRequest) HasBuiltinWebSearch() bool {
+	if SearchDisabled(r.ToolChoice) {
+		return false
+	}
+	for _, tool := range r.Tools {
+		if tool.IsBuiltinWebSearch() {
+			return true
+		}
+	}
+	return false
+}
+
+// WithoutBuiltinWebSearch 从已转换的 chat tools 中移除内置搜索桥接工具。
+// 代理仅执行一轮官方搜索；回填结果后不再给模型搜索工具，避免循环扣费。
+func WithoutBuiltinWebSearch(tools any) any {
+	list, ok := tools.([]map[string]any)
+	if !ok {
+		return tools
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, tool := range list {
+		fn, _ := tool["function"].(map[string]any)
+		name, _ := fn["name"].(string)
+		if strings.EqualFold(strings.TrimSpace(name), BuiltinWebSearchToolName) {
+			continue
+		}
+		out = append(out, tool)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // toChatTool 把 Responses 扁平 tool 转成 chat 的 {type:"function", function:{...}}。
 func (t ResponsesTool) toChatTool() map[string]any {
 	// 已是 chat 嵌套风格
@@ -266,8 +325,38 @@ func (t ResponsesTool) toChatTool() map[string]any {
 		return map[string]any{"type": "function", "function": fn}
 	}
 	typ := strings.ToLower(strings.TrimSpace(t.Type))
+	if t.IsBuiltinWebSearch() {
+		// 上游 chat 不认识内置 web_search。桥接成保留名称的 function 工具，
+		// 由代理在服务端执行后回填结果（见 server/responses_search.go）。
+		return map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        BuiltinWebSearchToolName,
+				"description": "Search the public web. Call this when the answer needs current facts, news, prices, or sources. Provide one concise query.",
+				"parameters": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "The search query.",
+						},
+						"allowed_domains": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "Optional domain allowlist.",
+						},
+						"freshness": map[string]any{
+							"type":        "string",
+							"description": "Optional recency filter: d1-d30, m1-m12, or y1-y5.",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		}
+	}
 	if typ != "function" || t.Name == "" {
-		// web_search / file_search / computer_use 等内置工具，跳过。
+		// file_search / computer_use 等其他内置工具，跳过。
 		return nil
 	}
 	fn := map[string]any{"name": t.Name}

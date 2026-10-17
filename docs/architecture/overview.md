@@ -8,6 +8,7 @@
 Client (OpenAI SDK / Codex CLI / curl / NewAPI / ZCode)
    │  /v1/chat/completions  or  /v1/responses  (SSE or JSON)
    │  /v1/images/generations  or  /v1/images/edits
+   │  /v1/search  /v1/webfetch  /v1/agentic_search
    ▼
 server ──► gateway ──► accounts pool + oauth refresh
                  │
@@ -19,6 +20,9 @@ server ──► gateway ──► accounts pool + oauth refresh
          POST /v2/chat/completions
          POST /v2/images/generations
          POST /v2/images/edits
+         POST /agenttool/v1/search
+         POST /agenttool/v1/webfetch
+         POST /agenttool/v1/agentic_search
          GET  /v3/config
 ```
 
@@ -32,9 +36,9 @@ server ──► gateway ──► accounts pool + oauth refresh
 | `usagejournal` | 用量明细环形缓冲、按日汇总、可选 `proxy-usage.json` 落盘 | HTTP / 管理台 HTML |
 | `version` | 构建时 `-ldflags` 注入的发布号（`Makefile VERSION=`） | 业务逻辑 |
 | `oauth` | OAuth 发起 / 轮询 / refresh / JWT 解析 | 路由 |
-| `provider` | 上游请求头、SSE 解析、事件累积、Usage 归一化 | 账号选择策略 |
+| `provider` | 上游请求头、SSE 解析、事件累积、Usage 归一化、官方 `/agenttool/v1/*` 搜索/抓取客户端 | 账号选择策略 |
 | `models` | 模型发现与 public id 规范化 | 流式聊天 |
-| `gateway` | 选号、额度快照探活、失败换号、会话粘滞调度、stats、用量 journal 记录、OAuth session、运行时配置（`atomic.Pointer`） | HTML |
+| `gateway` | 选号、额度快照探活、失败换号、会话粘滞调度、stats、用量 journal 记录、OAuth session、搜索/抓取调度、运行时配置（`atomic.Pointer`） | HTML |
 | `server` | 路由、鉴权、流式写回 | 上游协议细节 |
 | `admin` | 管理台页面字符串 | 业务状态机 |
 | `billing` | Credits 查询（剩余 / 总额）与通知码解析 | 账号写入 |
@@ -75,6 +79,21 @@ server ──► gateway ──► accounts pool + oauth refresh
 3. 选号、refresh、429/5xx 换号与 chat 相同，**不钉会话**、不复用 `X-Conversation-ID`
 4. 上游始终只回一张 COS `url`；`n!=1` 与 `response_format=b64_json` 在入口拒绝。目录 `tags` 含 `text-to-image` 的模型标 `mode=image_generation`，chat 探活跳过这些模型
 5. 收尾写 `usagejournal` 与全局 stats，与 chat 共用 `BeginRequest` / `RecordChat`
+
+## 请求生命周期（search / fetch）
+
+1. API Key 校验与区域解析与 chat 相同（`X-Site` > Key 绑定 > 进程默认）
+2. `POST /v1/search` / `/v1/webfetch` / `/v1/agentic_search` 直接调用账号池的官方
+   `/agenttool/v1/search`、`/agenttool/v1/webfetch`、`/agenttool/v1/agentic_search`，
+   **不接独立第三方搜索服务**，沿用该账号的官方搜索配额及计费规则；积分单价未对账，不估算搜索 Credit
+3. 选号、OAuth refresh、429/5xx 换号与 images 相同：不钉会话、不复用
+   `X-Conversation-ID`；固定账号 Key 仍然禁止换号
+4. `agentic_search` 上游是 SSE；`stream=false` 时在网关聚合成 JSON，
+   `stream=true` 时逐事件透传并在结尾补 `synthesis` 与 `[DONE]`
+5. 下游必须显式请求：Chat `web_search_options:{}` 或内置搜索 tools 扩展，
+   Responses `tools:[{type:"web_search"}]`。入口转换成保留内部名称的 function，
+   服务端拦截模型调用、执行一轮官方搜索、回填 tool 消息后再跑一轮并移除搜索
+   工具。`tool_choice:"none"` 优先关闭；无声明请求不注入工具、不自动检索。
 
 ## 并发模型
 

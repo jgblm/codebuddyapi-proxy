@@ -1,0 +1,17 @@
+# Allow only build inputs. Never send credentials, account data, or local copies.
+**
+!Dockerfile
+!.dockerignore
+!go.mod
+!LICENSE
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+**/.env
+**/.env.*
+**/*.json
+**/*.log
+**/*.exe
+**/*.pem
+**/*.key

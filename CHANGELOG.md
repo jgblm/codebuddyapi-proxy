@@ -5,6 +5,31 @@
 
 ---
 
+## v0.6 · 2026-10-17 · 官方搜索与 Docker 发布
+
+### 新增
+
+- `POST /v1/search`：关键词搜索，转发官方 `/agenttool/v1/search`，支持 `max_results`、`allowed_domains`、`blocked_domains`、`freshness`。
+- `POST /v1/webfetch`：网页正文抓取，转发官方 `/agenttool/v1/webfetch`（由上游取页并转 Markdown；代理只校验 `http/https`）。
+- `POST /v1/agentic_search`：多步研究代理，转发官方 `/agenttool/v1/agentic_search`；`stream=false` 聚合 JSON，`stream=true` 透传 SSE 进度与最终 `synthesis`。
+- Responses API 内置 `web_search` / `web_search_preview` 不再静默丢弃：代理桥接成 function 工具，用当前账号的官方搜索接口执行一轮搜索后回填结果并继续对话。
+- 下游仅显式声明才联网：Chat 支持 `web_search_options:{}`（也接受内置搜索 tools 扩展）；Responses 使用内置 `web_search`。不声明、传 null 或 `tool_choice:"none"` 均不自动搜索；客户端 function 工具保持原有处理方式。新增客户端接入和中转透传说明。
+- 新增非 root 多阶段 Dockerfile、持久化 Compose 与 GHCR release 工作流：tag 验证后发布 amd64/arm64/ARMv7 镜像，稳定版本更新 latest。
+- 审查修复：搜索内部调用继承固定账号约束、Responses 汇总两轮模型用量并立即发 SSE 首帧、agentic 无 done 帧聚合与缺失字段处理、换号耗尽保留原始上游错误。
+
+### 边界
+
+- 三个接口全部使用账号池里的 CodeBuddy / WorkBuddy OAuth token，沿用上游官方搜索配额及计费规则，不接独立第三方搜索服务；尚未对账验证单次搜索积分扣费。
+- 搜索请求与 images 一样不钉会话、不复用 `X-Conversation-ID`；固定账号 Key 仍禁止换号。
+- 上游配额不足常见错误码 `15001`（`quota_web_search`），按普通上游错误返回。
+- 内置 `web_search` 每次请求最多执行一轮，避免模型反复调用造成重复扣费。
+
+### 仓库整理
+
+- 本地设计稿、开发规范、工作计划及代理审查材料不再纳入版本控制，保留用户接入、API、运维与发行文档。现有 Git 历史不做重写。
+
+---
+
 ## v0.5.6 · 2026-10-16 · 图片上下文、账号绑定、积分到期与 Linux ARM
 
 ### 修复与新增

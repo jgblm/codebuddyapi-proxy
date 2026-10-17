@@ -1,0 +1,131 @@
+name: Docker release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose.yaml
+      - go.mod
+      - "cmd/**"
+      - "internal/**"
+      - ".github/workflows/docker-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check formatting, vet and tests
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          go vet ./...
+          go test -race ./...
+      - uses: docker/setup-buildx-action@v3
+      - name: Build smoke-test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: buddy-proxy:smoke
+      - name: Check startup, health, auth and persistence
+        env:
+          CODEBUDDY_PROXY_API_KEY: local-ci-key
+          CODEBUDDY_PROXY_ADMIN_PASSWORD: local-ci-admin
+        run: |
+          set -eu
+          docker compose config --quiet
+          docker volume create buddy-ci-data
+          trap 'docker rm -f buddy-smoke >/dev/null 2>&1 || true; docker volume rm buddy-ci-data >/dev/null 2>&1 || true' EXIT
+          start_container() {
+            docker run -d --name buddy-smoke --read-only --tmpfs /tmp \
+              --cap-drop ALL --security-opt no-new-privileges:true \
+              -e CODEBUDDY_PROXY_ADMIN_PASSWORD \
+              -v buddy-ci-data:/data buddy-proxy:smoke
+            for i in $(seq 1 30); do
+              if docker exec buddy-smoke wget -q -O /dev/null http://127.0.0.1:32126/health; then
+                return
+              fi
+              sleep 1
+            done
+            docker logs buddy-smoke
+            exit 1
+          }
+          start_container
+          docker exec buddy-smoke test -s /data/proxy.env
+          docker exec buddy-smoke sh -c 'test "$(id -u)" = 10001'
+          first="$(docker exec buddy-smoke sha256sum /data/proxy.env)"
+          if docker exec buddy-smoke wget -q -O /dev/null http://127.0.0.1:32126/v1/models; then
+            echo "Unauthenticated API request unexpectedly succeeded"
+            exit 1
+          fi
+          docker stop --time 20 buddy-smoke
+          docker rm buddy-smoke
+          start_container
+          test "$first" = "$(docker exec buddy-smoke sha256sum /data/proxy.env)"
+          docker stop --time 20 buddy-smoke
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set image and build metadata
+        id: image
+        shell: bash
+        run: |
+          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=${{ steps.image.outputs.version }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish multi-platform image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILT_AT=${{ steps.image.outputs.built_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true

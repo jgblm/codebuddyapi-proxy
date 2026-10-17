@@ -1,0 +1,29 @@
+services:
+  buddy-proxy:
+    image: ${BUDDY_PROXY_IMAGE:-ghcr.io/wnddd839/buddy-proxy:latest}
+    build:
+      context: .
+      args:
+        VERSION: ${BUDDY_PROXY_VERSION:-dev}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BUDDY_PROXY_PORT:-32126}:32126"
+    environment:
+      CODEBUDDY_PROXY_API_KEY: ${CODEBUDDY_PROXY_API_KEY:?Set CODEBUDDY_PROXY_API_KEY}
+      CODEBUDDY_PROXY_ADMIN_PASSWORD: ${CODEBUDDY_PROXY_ADMIN_PASSWORD:?Set CODEBUDDY_PROXY_ADMIN_PASSWORD}
+      CODEBUDDY_PROXY_REQUIRE_API_KEY: "true"
+      CODEBUDDY_SITE: ${CODEBUDDY_SITE:-domestic}
+      CODEBUDDY_PRODUCT: ${CODEBUDDY_PRODUCT:-workbuddy}
+    volumes:
+      - buddy-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+
+volumes:
+  buddy-data:

@@ -63,6 +63,7 @@ kiro-proxy 已发布
 | :--- | :--- |
 | **协议直连** | OAuth 登录后直连上游，不依赖 `codebuddy --serve` 等本地中间进程 |
 | **标准 OpenAI 形状** | `GET /v1/models` · `POST /v1/chat/completions` · `POST /v1/responses`（Responses API，Codex CLI 可直连）· `POST /v1/images/generations` · `POST /v1/images/edits`，流式与非流式都支持 |
+| **官方搜索能力** | Chat 显式传 `web_search_options:{}`，Responses 显式声明 `web_search`，由代理执行官方搜索闭环；不声明不搜索。另有 `/v1/search`、`/v1/webfetch`、`/v1/agentic_search`。使用账号官方权限及配额，不接独立第三方搜索服务，详见[下游接入](docs/guides/search.md) |
 | **多账号调度** | 同会话钉在同一账号；钉号被禁用/删除会换号。新会话按额度快照选最大（缺快照或超过 5 分钟才探活）；失败换号前再探活拿最大。6004 按错误文案 `will reset at` 长冷却。凭据以 `0600` 权限落盘 |
 | **真实余额** | 管理台直读官网 Credits，显示「剩余 / 总额」 |
 | **国内 / 国际** | 同一进程可同时持有两区账号。默认区域可在管理台切换；单请求用 Key 绑定、`X-Site` 或 `cn:` / `global:` 前缀选区。**端点以账号自身区域为准** |
@@ -74,6 +75,12 @@ kiro-proxy 已发布
 ---
 
 ## 快速开始
+
+### Docker
+
+已提供 `Dockerfile`、`compose.yaml` 与 GHCR 多架构 release 工作流。
+设置 API Key 和管理台密码后运行 `docker compose up -d --build`；
+数据持久化到卷，默认仅发布宿主机本地端口。详见 [Docker 部署与发布](docs/guides/docker.md)。
 
 ### 方式 A：下载即用（推荐）
 
@@ -171,7 +178,7 @@ export CODEBUDDY_PROXY_API_KEY=cbp_xxx
 codex "帮我看看这个仓库的结构"
 ```
 
-支持 `input` item 数组 / `instructions` / function 工具调用 / `reasoning.effort`；流式为命名 SSE 事件（`response.output_text.delta` 等）。`background`、服务端存储（`store` / `previous_response_id`）与内置工具（`web_search` 等）不支持，详见 [HTTP API](docs/api/http.md)。
+支持 `input` item 数组 / `instructions` / function 工具调用 / `reasoning.effort` 和内置 `web_search`；流式为命名 SSE 事件（`response.output_text.delta` 等）。搜索请求会先发 created/保活，最终答案聚合后回放；`background`、服务端存储及其他内置工具仍有限制，详见 [HTTP API](docs/api/http.md)。
 
 国内 / 国际、CodeBuddy / WorkBuddy 切换只需改 `.env`（或在管理台点切换）：
 
