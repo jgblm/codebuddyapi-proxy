@@ -25,6 +25,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 COPY --from=build /out/codebuddy-proxy /usr/local/bin/codebuddy-proxy
 COPY LICENSE /usr/share/licenses/buddy-proxy/LICENSE
 ENV HOME=/data \
+    CODEBUDDY_PROXY_CONTAINER=1 \
     CODEBUDDY_PROXY_HOST=0.0.0.0 \
     CODEBUDDY_PROXY_PORT=32126 \
     CODEBUDDY_PROXY_ENV_FILE=/data/proxy.env \

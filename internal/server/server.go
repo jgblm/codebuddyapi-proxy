@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -28,17 +29,19 @@ import (
 	"github.com/wnddd839/codebuddy-proxy/internal/provider"
 	"github.com/wnddd839/codebuddy-proxy/internal/sessionpin"
 	"github.com/wnddd839/codebuddy-proxy/internal/strutil"
+	"github.com/wnddd839/codebuddy-proxy/internal/update"
 	"github.com/wnddd839/codebuddy-proxy/internal/usagejournal"
 	"github.com/wnddd839/codebuddy-proxy/internal/version"
 )
 
 type Server struct {
-	Svc  *gateway.Service
-	HTTP *http.Server
+	Svc     *gateway.Service
+	HTTP    *http.Server
+	Updater *update.Manager
 }
 
 func New(cfg config.Config, svc *gateway.Service) *Server {
-	s := &Server{Svc: svc}
+	s := &Server{Svc: svc, Updater: update.New(version.Version)}
 	mux := http.NewServeMux()
 	// Go 1.22+ 方法感知路由（http_servemux_patterns）
 	// 避免与方法相关的尾斜杠子树与更深层精确路由冲突。
@@ -87,7 +90,15 @@ func New(cfg config.Config, svc *gateway.Service) *Server {
 }
 
 func (s *Server) ListenAndServe() error {
-	return s.HTTP.ListenAndServe()
+	listener, err := net.Listen("tcp", s.HTTP.Addr)
+	if err != nil {
+		return err
+	}
+	if err := update.ReportReady(); err != nil {
+		listener.Close()
+		return err
+	}
+	return s.HTTP.Serve(listener)
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -622,6 +633,9 @@ func (s *Server) handleAdminAPI(w http.ResponseWriter, r *http.Request, path str
 	}
 	publicOrigin := httputil.PublicOrigin(r, s.Svc.Config().PublicBaseURL)
 	switch {
+	case strings.HasPrefix(path, "/direct-admin/api/update"):
+		s.handleUpdate(w, r, path)
+		return
 	case path == "/direct-admin/api/status" && r.Method == http.MethodGet:
 		fresh := queryTruthy(r.URL.Query().Get("fresh"))
 		_ = s.Svc.ProbeUpstream(r.Context(), fresh)

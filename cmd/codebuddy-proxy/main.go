@@ -13,9 +13,13 @@ import (
 	"github.com/wnddd839/codebuddy-proxy/internal/config"
 	"github.com/wnddd839/codebuddy-proxy/internal/gateway"
 	"github.com/wnddd839/codebuddy-proxy/internal/server"
+	"github.com/wnddd839/codebuddy-proxy/internal/update"
 )
 
 func main() {
+	if update.DispatchHelper() {
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()}))
 	cfg := config.Load()
 	generatedKey := false
@@ -65,21 +69,62 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	select {
-	case err := <-errCh:
-		if err != nil {
-			logger.Error("server exited", "error", err)
-			os.Exit(1)
-		}
-	case sig := <-sigCh:
-		logger.Info("shutting down", "signal", sig.String())
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil {
-			logger.Error("shutdown error", "error", err)
-			os.Exit(1)
+	for {
+		select {
+		case staged := <-srv.Updater.Requests():
+			handoff, err := srv.Updater.Prepare(staged)
+			if err != nil {
+				_ = os.Remove(staged)
+				logger.Error("prepare update restart failed", "error", err)
+				// 交接前失败不关闭服务，允许管理台查看错误和重试。
+				srv.Updater.Fail(err)
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err = finishUpdate(ctx, srv.Shutdown, handoff)
+			cancel()
+			if err != nil {
+				handoff.Abort()
+				_ = os.Remove(staged)
+				logger.Error("update handoff failed; original binary unchanged", "error", err)
+				os.Exit(1)
+			}
+			return
+		case err := <-errCh:
+			if err != nil {
+				logger.Error("server exited", "error", err)
+				os.Exit(1)
+			}
+			return
+		case sig := <-sigCh:
+			logger.Info("shutting down", "signal", sig.String())
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := srv.Shutdown(ctx); err != nil {
+				logger.Error("shutdown error", "error", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
+}
+
+type updateHandoff interface {
+	Commit() error
+	RestartOriginal(string) error
+}
+
+// finishUpdate 在排空失败时保留助手，让它等本进程退出后重启原版本。
+// Shutdown 已关闭监听且服务资源可能已关闭，不能直接回到原服务循环。
+func finishUpdate(ctx context.Context, shutdown func(context.Context) error, handoff updateHandoff) error {
+	if err := shutdown(ctx); err != nil {
+		message := fmt.Sprintf("更新排空失败，已取消更新并重新启动原程序：%v", err)
+		if restartErr := handoff.RestartOriginal(message); restartErr != nil {
+			return fmt.Errorf("更新排空失败：%w；重启原程序交接失败：%v", err, restartErr)
+		}
+		return nil
+	}
+	return handoff.Commit()
 }
 
 func logLevel() slog.Level {

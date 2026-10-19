@@ -70,6 +70,15 @@ a{color:inherit;text-decoration:none}
 }
 .pill{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto;white-space:nowrap}
 .pill + .pill::before{content:"·";margin:0 10px;color:var(--fg-40)}
+/* 更新控件单独一行，避免顶栏 pillrow 溢出 */
+.updatebar{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin:0 0 16px;font-family:var(--sans);font-size:11px;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--fg-60);
+}
+.updatebar button{padding:6px 12px;font-size:11px}
+/* 状态文案保持原文大小写并允许换行 */
+#updateMessage{text-transform:none;letter-spacing:0;white-space:normal;overflow-wrap:anywhere}
 .pill .dot{
   width:6px;height:6px;background:var(--fg);border:1px solid var(--fg);
 }
@@ -376,6 +385,14 @@ pre{
       <span class="pill">version · <span class="mono" id="pillVersion">—</span></span>
     </div>
   </header>
+
+  <!-- 手动更新入口：仅点击时访问 GitHub，不自动检查 -->
+  <div class="updatebar">
+    <button type="button" id="updateCheck">检查更新</button>
+    <button type="button" id="updateInstall" hidden>更新并重启</button>
+    <button type="button" id="updateCancel" hidden>取消下载</button>
+    <span id="updateMessage" role="status" aria-live="polite"></span>
+  </div>
 
   <!-- 章节目录切页导航 (Chapter Tabs) -->
   <nav class="tabs-nav" role="tablist">
@@ -751,6 +768,73 @@ async function api(path, opts={}) {
   if (!res.ok) throw new Error((data && data.error && data.error.message) || data.message || data.error || ('HTTP '+res.status));
   return data;
 }
+
+// 页面加载和常规轮询均不检查 Release；只有用户点击才会访问 GitHub。
+let updatePolling = false;
+// 更新请求单独加 AbortController 超时：重启期间旧连接可能长时间挂起。
+// 默认 3 秒适合本地状态轮询；检查更新要访问 GitHub，单独放宽。
+async function updateFetch(path, opts={}, timeoutMs=3000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(function(){ ctrl.abort(); }, timeoutMs);
+  try {
+    const headers = Object.assign({'content-type':'application/json'}, opts.headers||{});
+    const res = await fetch(path, Object.assign({}, opts, {headers: headers, credentials:'same-origin', signal: ctrl.signal}));
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {raw:text}; }
+    if (!res.ok) throw new Error((data && data.error && data.error.message) || data.message || data.error || ('HTTP '+res.status));
+    return data;
+  } catch(e) {
+    // 中止错误统一成可读中文，由调用方决定显示“等待服务重新连接”还是具体原因。
+    if (e && e.name === 'AbortError') throw new Error('请求超时（'+Math.round(timeoutMs/1000)+' 秒）');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+// 只读取本地内存状态，让 Docker/dev 用户在打开页面时看到操作说明。
+updateFetch('/direct-admin/api/update').then(renderUpdate).catch(function(){});
+function renderUpdate(s) {
+  $('updateMessage').textContent = s.message || (s.available ? ('可更新至 '+s.latest) : (s.latest ? '已是最新版本' : ''));
+  $('updateInstall').hidden = !s.available;
+  const busy = ['checking','downloading','restarting'].includes(s.phase);
+  $('updateInstall').disabled = busy;
+  $('updateCheck').disabled = busy;
+  $('updateCancel').hidden = s.phase !== 'downloading';
+}
+$('updateCheck').addEventListener('click', async function(){
+  this.disabled = true;
+  $('updateMessage').textContent = '正在检查更新…';
+  try { renderUpdate(await updateFetch('/direct-admin/api/update/check', {method:'POST'}, 30000)); }
+  catch(e) { $('updateMessage').textContent = e.message; this.disabled = false; }
+});
+$('updateCancel').addEventListener('click', async function(){
+  try { await updateFetch('/direct-admin/api/update/cancel', {method:'POST'}); }
+  catch(e) { $('updateMessage').textContent = e.message; }
+});
+$('updateInstall').addEventListener('click', async function(){
+  if (!confirm('更新将排空当前请求并重启，仅替换可执行文件。继续？')) return;
+  const before = (await updateFetch('/direct-admin/api/update')).current;
+  this.disabled = true;
+  try {
+    renderUpdate(await updateFetch('/direct-admin/api/update/install', {method:'POST'}));
+    if (updatePolling) return;
+    updatePolling = true;
+    const deadline = Date.now()+240000;
+    while (Date.now()<deadline) {
+      await new Promise(resolve => setTimeout(resolve,1000));
+      try {
+        const s = await updateFetch('/direct-admin/api/update');
+        if (s.current !== before) { $('updateMessage').textContent = '更新完成：'+s.current; location.reload(); return; }
+        if (s.phase === 'error') { renderUpdate(s); return; }
+        if (s.phase === 'idle') { renderUpdate(s); $('updateMessage').textContent = s.message || '服务已重连但版本未变化，请检查安装目录更新日志（可能已回滚）'; return; }
+        renderUpdate(s);
+      } catch(e) { $('updateMessage').textContent = '等待服务重新连接…'; }
+    }
+    $('updateMessage').textContent = '重连超时，请检查安装目录 .buddy-update-helper-*.exe.log 和原程序备份；不要重复启动服务';
+  } catch(e) { $('updateMessage').textContent = e.message; }
+  finally { updatePolling = false; this.disabled = false; $('updateCheck').disabled = false; }
+});
 
 function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, function(c){

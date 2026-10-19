@@ -109,6 +109,8 @@ chmod +x ./codebuddy-proxy-linux-amd64
 
 首次启动会自动生成 API Key 并写入同目录 `.env`，日志里会打印出来。
 
+运行中的实例可在管理台顶栏下方点「检查更新 / 更新并重启」，仅从官方 GitHub Release 下载并按 `SHA256SUMS.txt` 校验，成功后自动重启并回连；下载校验失败或新版本启动失败时保留/回滚旧程序。改动只替换可执行文件，不会覆盖 `.env`、账号池或用量文件。**首个带更新器的版本仍需手动升级一次**；Docker 部署请用镜像更新（`docker compose pull && docker compose up -d`）。
+
 ### 方式 B：从源码
 
 ```bash
