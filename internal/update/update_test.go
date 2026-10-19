@@ -63,6 +63,10 @@ func fixture(t *testing.T, checksum string) (*Manager, *atomic.Int32) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		switch {
+		case r.Method == http.MethodHead && strings.HasSuffix(r.URL.Path, "/latest"):
+			http.Redirect(w, r, releaseTagBase+"v0.6", http.StatusFound)
+		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/releases/tag/"):
+			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/latest"):
 			json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.6", "assets": []map[string]any{{"name": name, "size": len(data)}, {"name": "SHA256SUMS.txt", "size": 200}}})
 		case strings.HasSuffix(r.URL.Path, "SHA256SUMS.txt"):
@@ -72,6 +76,7 @@ func fixture(t *testing.T, checksum string) (*Manager, *atomic.Int32) {
 				fmt.Fprint(w, checksum)
 			}
 		case strings.HasSuffix(r.URL.Path, name):
+			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
 			w.Write(data)
 		default:
 			t.Errorf("unexpected request %s", r.URL)
@@ -95,7 +100,11 @@ func fixture(t *testing.T, checksum string) (*Manager, *atomic.Int32) {
 		c := r.Clone(r.Context())
 		c.URL.Scheme = "http"
 		c.URL.Host = strings.TrimPrefix(ts.URL, "http://")
-		return http.DefaultTransport.RoundTrip(c)
+		resp, err := http.DefaultTransport.RoundTrip(c)
+		if resp != nil {
+			resp.Request = r
+		}
+		return resp, err
 	})}
 	return m, &calls
 }
@@ -198,6 +207,9 @@ func TestReleaseAndResponseBoundaries(t *testing.T) {
 	} {
 		m, _ := fixture(t, "good")
 		m.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.String() == latestWebURL {
+				return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader(""))}, nil
+			}
 			if r.URL.String() != latestURL {
 				t.Errorf("unexpected feed %s", r.URL)
 			}

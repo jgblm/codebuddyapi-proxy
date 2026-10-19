@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +22,8 @@ import (
 )
 
 const latestURL = "https://api.github.com/repos/wnddd839/buddy-proxy/releases/latest"
+const latestWebURL = "https://github.com/wnddd839/buddy-proxy/releases/latest"
+const releaseTagBase = "https://github.com/wnddd839/buddy-proxy/releases/tag/"
 const downloadBase = "https://github.com/wnddd839/buddy-proxy/releases/download/"
 const maxBinary = 256 << 20
 
@@ -206,11 +207,7 @@ func (m *Manager) Check(ctx context.Context) (State, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	data, err := m.get(ctx, latestURL, 2<<20)
-	var rel release
-	if err == nil {
-		err = json.Unmarshal(data, &rel)
-	}
+	rel, err := m.latest(ctx)
 	if err == nil && (rel.Draft || rel.Prerelease || parseVersion(rel.Tag) == nil) {
 		err = errors.New("官方最新 Release 不是支持的正式版本")
 	}
@@ -309,7 +306,7 @@ func (m *Manager) get(ctx context.Context, u string, limit int64) ([]byte, error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("GitHub 更新请求失败：HTTP %d", resp.StatusCode)
+		return nil, responseError(resp)
 	}
 	if resp.ContentLength > limit {
 		return nil, errors.New("更新响应超出大小限制")
@@ -338,18 +335,9 @@ func (m *Manager) stage(ctx context.Context, rel release) (path string, err erro
 	if err != nil {
 		return path, err
 	}
-	expected := ""
-	for line := range strings.SplitSeq(string(sums), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == m.asset {
-			if expected != "" {
-				return path, errors.New("SHA256SUMS.txt 中目标条目重复")
-			}
-			expected = strings.ToLower(fields[0])
-		}
-	}
-	if decoded, e := hex.DecodeString(expected); e != nil || len(decoded) != sha256.Size {
-		return path, errors.New("SHA256SUMS.txt 缺少有效目标校验值")
+	expected, err := checksum(sums, m.asset)
+	if err != nil {
+		return path, err
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", base+m.asset, nil)
 	if err != nil {
@@ -361,7 +349,7 @@ func (m *Manager) stage(ctx context.Context, rel release) (path string, err erro
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return path, fmt.Errorf("下载失败：HTTP %d", resp.StatusCode)
+		return path, responseError(resp)
 	}
 	size := int64(0)
 	for _, a := range rel.Assets {
