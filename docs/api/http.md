@@ -154,7 +154,7 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 - **内置 `web_search` / `web_search_preview`**：代理把工具桥接成保留内部名称的 function，避免与客户端自己定义的 `web_search` function 冲突；服务端用当前账号的官方搜索接口执行并回填结果，默认只执行一轮搜索。
 - `reasoning.effort`、`max_output_tokens`、`temperature`、`top_p`、`prompt_cache_key`（→ 会话钉号；同会话同时复用上游 `X-Conversation-ID`）
 - 非流式：返回完整 `response` 对象（`output[]` 含 `reasoning` / `message` / `function_call` item + `usage`）
-- 流式：命名 SSE 事件（`event: response.output_text.delta` 等），完整生命周期 `response.created → output_item.added → *.delta → output_item.done → response.completed`，含 `response.reasoning_summary_text.delta`（思考）与 `response.function_call_arguments.delta/done`（工具调用），`sequence_number` 单调递增
+- 流式：命名 SSE 事件（`event: response.output_text.delta` 等），完整生命周期 `response.created → output_item.added → *.delta → output_item.done → response.completed`；输出被截断时终止事件为 `response.incomplete`。含 `response.reasoning_summary_text.delta`（思考）与 `response.function_call_arguments.delta/done`（工具调用），`sequence_number` 单调递增
 
 **不支持（明确降级）：**
 
@@ -185,6 +185,8 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 ```
 
 错误形态为 Responses 风格 `{"error":{"code":"...","message":"..."}}`。
+
+输出预算：`max_output_tokens` 转成上游实际识别的 `max_tokens`，并同时发送同值的 `max_completion_tokens`。上游以 `length` / `max_tokens` 结束时，返回 `status:"incomplete"` 和 `incomplete_details:{"reason":"max_output_tokens"}`，保留已生成的内容与用量；流式发送 `response.incomplete`，不伪装成完整完成。内容过滤对应 `reason:"content_filter"`。不指定正数上限时不发送这两个限制字段。
 
 图片支持：`message.content` 中的 `input_image` 转为 Chat 的 `image_url` 内容块；`function_call_output.output` 接受带图片的结构化数组，也识别工具将该数组编码成 JSON 字符串的形态。保留文本和 `tool_call_id` 关联，图片放在同组连续工具结果全部结束后的 user 消息中，避免把图片 base64 当普通文本计入上下文，或在并行工具回执中间插入用户消息。普通 JSON 工具输出不做图片协议推断。
 
@@ -327,9 +329,11 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 | `model` | 支持 `codebuddy/<id>` / `codebuddy:<id>` 前缀；也支持按请求选区：`cn:` / `domestic:`（国内）与 `global:` / `intl:`（国际）。无前缀时：`X-Site` > Key 绑定的区域 > 进程默认 `CODEBUDDY_SITE`。空或 `default` 归一为 `auto` |
 | `stream` | `false` → `application/json`；`true` → `text/event-stream` |
 | `stream_options.include_usage` | 缺省按 `true` 推送空 `choices` 的 usage 收尾 chunk；显式 `false` 跳过 |
-| `max_tokens` / `max_completion_tokens` | 二者取正数，后者优先 |
+| `max_tokens` / `max_completion_tokens` | 二者取正数，后者优先；同时映射为上游同值的 `max_tokens` 和 `max_completion_tokens`，不设正数上限时均不发送 |
 | `tool_choice` | 对象型会被归一为 `auto` / `none` / `required` |
 | `web_search_options` | 非 null 对象（推荐 `{}`）显式启用官方搜索桥接；省略 / null 不开启，`tool_choice:"none"` 优先关闭。目前仅作为启用声明，不解释其子字段 |
+
+上游返回 `length` / `max_tokens` 时，Chat 的 JSON 与流式收尾均返回 `finish_reason:"length"`，不会改成 `stop`；`content_filter` 同样保留。代理不在本地按字符截断或伪造 token 用量。若显式联网搜索触发多个内部模型调用，该上限随每次模型调用发送，不是对整个搜索链路实施累计 token 限额。
 
 #### Chat 显式联网搜索
 

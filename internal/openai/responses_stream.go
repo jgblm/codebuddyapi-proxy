@@ -340,7 +340,7 @@ func (b *ResponseStreamBuilder) ToolCallDone() []ResponseStreamEvent {
 	}}
 }
 
-// Completed 关闭所有未完结 item 并返回 response.completed。
+// Completed 关闭未完结 item；预算耗尽时返回 response.incomplete，而非伪装正常完成。
 func (b *ResponseStreamBuilder) Completed(turn provider.Turn) []ResponseStreamEvent {
 	var events []ResponseStreamEvent
 	if b.reasoningOpen {
@@ -357,8 +357,17 @@ func (b *ResponseStreamBuilder) Completed(turn provider.Turn) []ResponseStreamEv
 		}
 	}
 	resp := ResponseFromTurn(turn, b.ResponseID, b.Model, b.Req)
+	eventType := "response.completed"
+	if resp.Status == "incomplete" {
+		eventType = "response.incomplete"
+		for i := range events {
+			if item := events[i].Item; item != nil && item.Type == "message" {
+				item.Status = "incomplete"
+			}
+		}
+	}
 	events = append(events, ResponseStreamEvent{
-		Type:           "response.completed",
+		Type:           eventType,
 		Response:       &resp,
 		SequenceNumber: b.nextSeq(),
 	})

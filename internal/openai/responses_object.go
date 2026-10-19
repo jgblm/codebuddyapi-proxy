@@ -58,7 +58,25 @@ func NewResponseObject(id, model string, req *ResponsesRequest) ResponseObject {
 func ResponseFromTurn(turn provider.Turn, id, model string, req *ResponsesRequest) ResponseObject {
 	output := OutputItemsFromTurn(turn)
 	usage := ResponsesUsageFromProvider(turn.Usage)
-	return responseObject(id, model, req, "completed", output, &usage, nil)
+	obj := responseObject(id, model, req, "completed", output, &usage, nil)
+	reason := ""
+	switch FinishReasonFromTurn(turn) {
+	case "length":
+		reason = "max_output_tokens"
+	case "content_filter":
+		reason = "content_filter"
+	}
+	if reason != "" {
+		// Responses 没有 finish_reason，以 incomplete 状态和原因表达未完整生成。
+		obj.Status = "incomplete"
+		obj.IncompleteDetails = map[string]any{"reason": reason}
+		for i := range obj.Output {
+			if obj.Output[i].Type == "message" {
+				obj.Output[i].Status = "incomplete"
+			}
+		}
+	}
+	return obj
 }
 
 // FailedResponseObject 生成 status=failed 的 Response（response.failed 帧）。

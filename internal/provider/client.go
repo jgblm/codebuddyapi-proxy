@@ -732,6 +732,8 @@ func (c *Client) Complete(ctx context.Context, opts ChatOptions) (Result, error)
 		body["top_p"] = *opts.TopP
 	}
 	if opts.MaxCompletionTokens > 0 {
+		// 上游协议只保证识别 max_tokens；保留同值的新字段以兼容其他网关。
+		body["max_tokens"] = opts.MaxCompletionTokens
 		body["max_completion_tokens"] = opts.MaxCompletionTokens
 	}
 	if opts.Tools != nil {
@@ -822,6 +824,9 @@ func DescribeUpstreamBody(body map[string]any) map[string]any {
 	}
 	if v, ok := body["max_completion_tokens"]; ok && v != nil {
 		fp["max_completion_tokens"] = fmt.Sprint(v)
+	}
+	if v, ok := body["max_tokens"]; ok && v != nil {
+		fp["max_tokens"] = fmt.Sprint(v)
 	}
 	if choice, ok := body["tool_choice"]; ok && choice != nil {
 		fp["tool_choice"] = strutil.Truncate(fmt.Sprint(choice), 80)

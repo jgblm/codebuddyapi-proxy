@@ -37,6 +37,7 @@ kiro-proxy 已发布
 - [@kkl31415926](https://github.com/kkl31415926) · [#16](https://github.com/wnddd839/buddy-proxy/issues/16) 流式 `tool_calls[].index` 缺失导致 Android Studio / OpenAI Java SDK 报错
 - [@kkblank](https://github.com/kkblank) · [#36](https://github.com/wnddd839/buddy-proxy/issues/36) Responses 工具截图被当作 base64 文本导致上下文膨胀（附生产日志与图片/文本 token 对照）
 - [@kylstwang](https://github.com/kylstwang) · [#37](https://github.com/wnddd839/buddy-proxy/issues/37) Linux ARM 路由器运行与预编译发行包需求
+- [@kouekikin24](https://github.com/kouekikin24) · [#45](https://github.com/wnddd839/buddy-proxy/issues/45) 输出 token 上限静默失效（附国内/国际仅改字段名的上游对照与修复验证）
 
 ---
 

@@ -257,10 +257,7 @@ func FromTurn(turn provider.Turn, id, model string) ChatCompletion {
 			},
 		})
 	}
-	finish := "stop"
-	if len(toolCalls) > 0 {
-		finish = "tool_calls"
-	}
+	finish := FinishReasonFromTurn(turn)
 	var content any = turn.Text
 	if turn.Text == "" {
 		content = nil
@@ -284,6 +281,20 @@ func FromTurn(turn provider.Turn, id, model string) ChatCompletion {
 		}},
 		Usage: UsageFromProvider(turn.Usage),
 	}
+}
+
+// FinishReasonFromTurn 保留上游截断和过滤原因，不把输出预算耗尽伪装成正常结束。
+func FinishReasonFromTurn(turn provider.Turn) string {
+	switch strings.ToLower(strings.TrimSpace(turn.StopReason)) {
+	case "length", "max_tokens":
+		return "length"
+	case "content_filter":
+		return "content_filter"
+	}
+	if len(turn.ToolUses) > 0 {
+		return "tool_calls"
+	}
+	return "stop"
 }
 
 func StreamChunkOf(id, model string, delta Delta, finishReason *string) StreamChunk {

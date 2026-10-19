@@ -5,6 +5,16 @@
 
 ---
 
+## 未发布 · 输出 token 上限修复
+
+- 修复 #45：客户端的 `max_tokens`、`max_completion_tokens` 及 Responses 的 `max_output_tokens` 归一后，同时向上游发送同值的 `max_tokens` 和 `max_completion_tokens`；前者是当前上游实际识别的字段。未指定正数上限时不新增字段，双字段同时指定时保持 `max_completion_tokens` 优先。
+- 排障请求指纹增加 `max_tokens`，便于确认上游实际收到的输出限制。
+- Chat 流式与非流式保留上游 `length`、`max_tokens` 和 `content_filter` 终止语义，不再一律回写 `stop`。Responses 在预算耗尽时返回 `status=incomplete`、`incomplete_details.reason=max_output_tokens`，流式使用 `response.incomplete` 事件。
+- 感谢 [@kouekikin24](https://github.com/kouekikin24) 在 [#45](https://github.com/wnddd839/buddy-proxy/issues/45) 提供国内/国际同 payload 字段名对照及修复验证。
+- 新增覆盖字段优先级、不设上限、Chat/Responses 双入口及流式/非流式终止状态的回归；没有调用真实上游，也不声称对多个内部模型调用实施累计输出预算。
+
+---
+
 ## v0.6 · 2026-10-17 · 官方搜索与 Docker 发布
 
 ### 新增
