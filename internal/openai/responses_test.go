@@ -234,6 +234,52 @@ func TestResponsesUsageFromProvider(t *testing.T) {
 	}
 }
 
+// 强类型 SDK（openai-java）把 input_tokens_details.cached_tokens 与
+// cache_write_tokens 当必填，缺一个就抛 "... is not set"，0 也必须出现。
+func TestResponsesUsageAlwaysEmitsCacheFields(t *testing.T) {
+	cases := []struct {
+		name  string
+		usage provider.Usage
+		want  string
+	}{
+		{"zero usage", provider.Usage{}, `"cached_tokens":0,"cache_write_tokens":0`},
+		{
+			"anthropic alias",
+			provider.Usage{PromptTokens: 10, CacheCreationInputTokens: 4},
+			`"cached_tokens":0,"cache_write_tokens":4`,
+		},
+		{
+			"openai alias",
+			provider.Usage{PromptTokens: 10, CacheWriteTokens: 7},
+			`"cached_tokens":0,"cache_write_tokens":7`,
+		},
+	}
+	for _, tc := range cases {
+		out := ResponsesUsageFromProvider(tc.usage)
+		raw, err := json.Marshal(out.InputTokensDetails)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := string(raw); !strings.Contains(got, tc.want) {
+			t.Fatalf("%s: details=%s want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestResponsesUsageCarriesCacheWriteFromDetails(t *testing.T) {
+	parsed := provider.ParseUsage(map[string]any{
+		"input_tokens": float64(120),
+		"input_tokens_details": map[string]any{
+			"cached_tokens":      float64(100),
+			"cache_write_tokens": float64(20),
+		},
+	})
+	out := ResponsesUsageFromProvider(parsed)
+	if out.InputTokensDetails.CachedTokens != 100 || out.InputTokensDetails.CacheWriteTokens != 20 {
+		t.Fatalf("details wrong: %+v", out.InputTokensDetails)
+	}
+}
+
 func TestNewItemIDsAreUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {

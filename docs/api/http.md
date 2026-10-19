@@ -188,6 +188,8 @@ OpenAI **Responses API** 协议翻译层，主要面向 Codex CLI 等以 `/v1/re
 
 输出预算：`max_output_tokens` 转成上游实际识别的 `max_tokens`，并同时发送同值的 `max_completion_tokens`。上游以 `length` / `max_tokens` 结束时，返回 `status:"incomplete"` 和 `incomplete_details:{"reason":"max_output_tokens"}`，保留已生成的内容与用量；流式发送 `response.incomplete`，不伪装成完整完成。内容过滤对应 `reason:"content_filter"`。不指定正数上限时不发送这两个限制字段。
 
+用量形态：`usage` 恒定包含 `input_tokens` / `output_tokens` / `total_tokens` / `input_tokens_details` / `output_tokens_details`，非流式响应与 `response.completed` 帧一致。`input_tokens_details` 恒定带 `cached_tokens` 与 `cache_write_tokens`，`output_tokens_details` 恒定带 `reasoning_tokens`——即使真实值为 0 也会出现。官方 openai-java 等强类型 SDK 把这些字段当必填，缺失会直接反序列化失败（`` `cache_write_tokens` is not set ``）。`cache_write_tokens` 优先取上游 `cache_write_tokens`，缺失时回落到 Anthropic 的 `cache_creation_input_tokens`。
+
 图片支持：`message.content` 中的 `input_image` 转为 Chat 的 `image_url` 内容块；`function_call_output.output` 接受带图片的结构化数组，也识别工具将该数组编码成 JSON 字符串的形态。保留文本和 `tool_call_id` 关联，图片放在同组连续工具结果全部结束后的 user 消息中，避免把图片 base64 当普通文本计入上下文，或在并行工具回执中间插入用户消息。普通 JSON 工具输出不做图片协议推断。
 
 图片内容由上游验证；代理不下载远程 URL，也不全量解码图片。模型必须支持视觉，超出上游图片或上下文限制仍会返回错误，不保证任意载荷均可发送。
