@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://wnddd839.github.io/buddy-proxy/"><img src="https://img.shields.io/badge/Product-Page-1C1C1C?style=flat-square" alt="Product Page" /></a>
+  <a href="https://github.com/wnddd839/buddy-proxy/releases/latest"><img src="https://img.shields.io/github/v/release/wnddd839/buddy-proxy?label=Latest%20release&style=flat-square&color=1C1C1C" alt="Latest release" /></a>
   <a href="https://github.com/wnddd839/buddy-proxy/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause-1C1C1C?style=flat-square" alt="License" /></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/Go-%E2%89%A51.26-1C1C1C?style=flat-square&logo=go&logoColor=white" alt="Go" /></a>
   <img src="https://img.shields.io/badge/Transport-protocol__direct-1C1C1C?style=flat-square" alt="protocol_direct" />
@@ -65,7 +66,7 @@ kiro-proxy 已发布
 | **协议直连** | OAuth 登录后直连上游，不依赖 `codebuddy --serve` 等本地中间进程 |
 | **标准 OpenAI 形状** | `GET /v1/models` · `POST /v1/chat/completions` · `POST /v1/responses`（Responses API，Codex CLI 可直连）· `POST /v1/images/generations` · `POST /v1/images/edits`，流式与非流式都支持 |
 | **官方搜索能力** | Chat 显式传 `web_search_options:{}`，Responses 显式声明 `web_search`，由代理执行官方搜索闭环；不声明不搜索。另有 `/v1/search`、`/v1/webfetch`、`/v1/agentic_search`。使用账号官方权限及配额，不接独立第三方搜索服务，详见[下游接入](docs/guides/search.md) |
-| **多账号调度** | 同会话钉在同一账号；钉号被禁用/删除会换号。新会话按额度快照选最大（缺快照或超过 5 分钟才探活）；失败换号前再探活拿最大。6004 按错误文案 `will reset at` 长冷却。凭据以 `0600` 权限落盘 |
+| **多账号调度** | 同会话钉在同一账号；钉号被禁用/删除会换号。新会话按额度快照选最大（缺快照或超过 5 分钟才探活）；失败换号前再探活拿最大。6004 / `rate-model` 按模型冷却，并按 `will reset at` 自动恢复，不阻断同账号其他模型。固定账号 Key 不换号。凭据以 `0600` 权限落盘 |
 | **真实余额** | 管理台直读官网 Credits，显示「剩余 / 总额」 |
 | **国内 / 国际** | 同一进程可同时持有两区账号。默认区域可在管理台切换；单请求用 Key 绑定、`X-Site` 或 `cn:` / `global:` 前缀选区。**端点以账号自身区域为准** |
 | **CodeBuddy / WorkBuddy** | 一键切产品：CodeBuddy 走 CLI 头，WorkBuddy 走 IDE 头；模型目录随之切换 |
@@ -111,7 +112,9 @@ chmod +x ./codebuddy-proxy-linux-amd64
 
 运行中的实例可在管理台顶栏下方点「检查更新 / 更新并重启」，仅从官方 GitHub Release 下载并按 `SHA256SUMS.txt` 校验，成功后自动重启并回连；下载校验失败或新版本启动失败时保留/回滚旧程序。改动只替换可执行文件，不会覆盖 `.env`、账号池或用量文件。**首个带更新器的版本仍需手动升级一次**；Docker 部署请用镜像更新（`docker compose pull && docker compose up -d`）。
 
-v0.6.2 起优先通过官方 Release 网页发现版本，避免共享代理出口耗尽匿名 API 额度。v0.6.1 如遇检查更新 HTTP 403，请手动升级到 v0.6.2，或临时换出口/等额度恢复后升级。
+当前正式版为 **v0.6.3**。从该版本起，6004 / `rate-model` 冷却按上游模型分别记录；限频某个模型不会阻断同一账号上的其他模型。v0.6.2 起更新器优先通过官方 Release 网页发现版本，避免共享代理出口耗尽匿名 API 额度。v0.6.1 如遇检查更新 HTTP 403，请手动升级到 v0.6.2 或更新版本。
+
+正式发行版的版本号由构建时的 Release tag 注入；源码直接构建默认显示 `dev`。
 
 ### 方式 B：从源码
 

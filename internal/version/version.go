@@ -1,7 +1,7 @@
 // Package version holds release metadata injected at link time.
 package version
 
-// Version is the semantic release tag (e.g. v4.6).
+// Version is the semantic release tag injected at link time; source builds report "dev".
 var Version = "dev"
 
 // Commit is the git revision when built with -ldflags.
