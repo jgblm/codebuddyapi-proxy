@@ -67,7 +67,7 @@ server ──► gateway ──► accounts pool + oauth refresh
 **失败处理**：
 
 - 鉴权类失败 → 强制 refresh 后重试同一账号一次
-- **429·502·503·504·rate limit / 额度耗尽** 等可恢复上游故障 → 松开该会话的账号钉，标记 `failedRequests` + `lastError`，写入 `cooldownUntil`；对仍可用的候选账号**并行探活额度**（只打 `/billing/meter/get-user-resource`，整批最多 2.5s，失败或超时保留缓存），再按 `PreferQuota` 选剩余最大者，用 `ExcludeIDs` 换号重试（单请求最多 16 个账号）。新会话的探活仍按第 3 步：只补 **缺失或超过 5 分钟** 的快照，快照新鲜则不打 billing。号池试尽或触达上限时回传真实上游错误，不用「重试深度超限」掩盖 429/503
+- **429·502·503·504·rate limit / 额度耗尽** 等可恢复上游故障 → 松开该会话的账号钉，标记 `failedRequests` + `lastError`，写入 `cooldownUntil`（6004 / rate-model 只写 `modelCooldowns[模型]`）；对仍可用的候选账号**并行探活额度**（只打 `/billing/meter/get-user-resource`，整批最多 2.5s，失败或超时保留缓存），再按 `PreferQuota` 选剩余最大者，用 `ExcludeIDs` 换号重试（单请求最多 16 个账号）。新会话的探活仍按第 3 步：只补 **缺失或超过 5 分钟** 的快照，快照新鲜则不打 billing。号池试尽或触达上限时回传真实上游错误，不用「重试深度超限」掩盖 429/503
 - 同区域**全部账号冷却** → 降级选 `cooldownUntil` 最小者（避免整体不可用）
 - `11140` / `11128` / `11101` / `11102` → **不换号**；失败仍写入冷却
 - 客户端主动取消 → 按正常结束计，不计失败

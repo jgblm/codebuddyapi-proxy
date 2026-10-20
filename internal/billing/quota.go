@@ -100,19 +100,23 @@ func parseBillingTimeMillis(raw string) int64 {
 
 const maxModelRateLimitCooldown = 48 * time.Hour
 
+// IsModelRateLimitError 区分模型频率限制与账号级额度/普通 429。
+func IsModelRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "6004") || strings.Contains(msg, "rate-model") || strings.Contains(msg, "rate model")
+}
+
 // ModelRateLimitCooldown 从 6004 / rate-model 的 "will reset at" 文案解析冷却时长。
 // 解析失败或已过期时返回 ok=false，由调用方回退固定表。
 func ModelRateLimitCooldown(err error, now time.Time) (time.Duration, bool) {
-	if err == nil {
+	if !IsModelRateLimitError(err) {
 		return 0, false
 	}
 	msg := err.Error()
 	lower := strings.ToLower(msg)
-	has6004 := strings.Contains(lower, "6004")
-	hasRateModel := strings.Contains(lower, "rate-model") || strings.Contains(lower, "rate model")
-	if !has6004 && !hasRateModel {
-		return 0, false
-	}
 	if !strings.Contains(lower, "will reset at") {
 		return 0, false
 	}

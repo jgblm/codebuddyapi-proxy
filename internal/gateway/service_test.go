@@ -47,13 +47,14 @@ func TestResolveProviderModel(t *testing.T) {
 }
 
 type scriptedChatTransport struct {
-	mu            sync.Mutex
-	calls         []string
-	chatCalls     []string
-	chatBodies    []string
-	billingCalls  []string
-	byAuth        map[string]int
-	creditsByAuth map[string]float64
+	mu              sync.Mutex
+	calls           []string
+	chatCalls       []string
+	chatBodies      []string
+	billingCalls    []string
+	byAuth          map[string]int
+	errorBodyByAuth map[string]string
+	creditsByAuth   map[string]float64
 }
 
 func (t *scriptedChatTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -100,6 +101,7 @@ func (t *scriptedChatTransport) RoundTrip(req *http.Request) (*http.Response, er
 		}
 	}
 	status := t.byAuth[token]
+	errorBody := t.errorBodyByAuth[token]
 	t.mu.Unlock()
 	if status == 0 {
 		status = http.StatusOK
@@ -112,6 +114,9 @@ func (t *scriptedChatTransport) RoundTrip(req *http.Request) (*http.Response, er
 	} else {
 		header.Set("Content-Type", "application/json")
 		body = `{"error":"too many requests"}`
+		if errorBody != "" {
+			body = errorBody
+		}
 	}
 	return &http.Response{
 		StatusCode: status,
@@ -297,6 +302,72 @@ func TestCompleteFromPoolPinnedAccountSwitchesAfter429(t *testing.T) {
 	}
 	if _, still := svc.Pins.Lookup(SessionPinKey("conv-sticky", "domestic")); still && result.AccountID == a.ID {
 		t.Fatal("failed pin must not keep the exhausted account")
+	}
+}
+
+func TestCompleteFromPoolSkipsCoolingPinnedAccount(t *testing.T) {
+	transport := &scriptedChatTransport{}
+	svc, a, b := newConversationTestService(t, transport)
+	svc.Pins.Remember(SessionPinKey("cooling-pin", "domestic"), a)
+	selection, err := svc.Pool.Select(accounts.SelectOptions{AccountID: a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Pool.MarkResult(selection, false, "429 too many requests", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.CompleteFromPool(t.Context(), CompleteOptions{
+		Model: "auto", SessionKey: "cooling-pin",
+		Messages: []map[string]any{{"role": "user", "content": "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := transport.snapshot()
+	if result.AccountID != b || len(calls) != 1 || calls[0] != "token-b" {
+		t.Fatalf("cooling pin reached upstream: account=%s calls=%v", result.AccountID, calls)
+	}
+}
+
+func TestCompleteFromPool6004OnlyCoolsRequestedModel(t *testing.T) {
+	const model = "deepseek-v4.1-flash"
+	reset := time.Now().Add(13 * time.Hour).UTC().Format(time.RFC3339)
+	transport := &scriptedChatTransport{
+		byAuth: map[string]int{"token-a": http.StatusTooManyRequests},
+		errorBodyByAuth: map[string]string{"token-a": fmt.Sprintf(
+			`{"code":6004,"message":"usage exceeds frequency limit, your usage will reset at %s, alternatively, you can switch to the other models to continue using it."}`, reset)},
+	}
+	svc, a, b := newConversationTestService(t, transport)
+	opts := CompleteOptions{
+		AccountID: a, FixedAccount: true, Model: model, SessionKey: "limited",
+		Messages: []map[string]any{{"role": "user", "content": "hi"}},
+	}
+	if _, err := svc.CompleteFromPool(t.Context(), opts); err == nil {
+		t.Fatal("expected model rate limit")
+	}
+	transport.mu.Lock()
+	transport.byAuth["token-a"] = http.StatusOK
+	transport.mu.Unlock()
+	opts.Model = "other-model"
+	opts.FixedAccount = false
+	result, err := svc.CompleteFromPool(t.Context(), opts)
+	if err != nil || result.AccountID != a {
+		t.Fatalf("other model blocked: account=%s err=%v", result.AccountID, err)
+	}
+	store, err := svc.Pool.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, account := range store.Accounts {
+		if account.ID == a && (account.CooldownUntil != 0 || account.ModelCooldowns[model] <= time.Now().UnixMilli()) {
+			t.Fatalf("model cooldown lost or applied to whole account: %+v", account.ModelCooldowns)
+		}
+	}
+	opts.AccountID, opts.FixedAccount, opts.Model = "", false, model
+	opts.SessionKey = "limited"
+	result, err = svc.CompleteFromPool(t.Context(), opts)
+	if err != nil || result.AccountID != b {
+		t.Fatalf("limited model did not switch account: account=%s err=%v", result.AccountID, err)
 	}
 }
 

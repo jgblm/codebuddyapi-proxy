@@ -158,23 +158,27 @@ func TestPoolConcurrentSelectThroughput(t *testing.T) {
 }
 
 func TestSummarizeStoreForSitePrefersActiveRegion(t *testing.T) {
+	now := time.Now()
 	store := accounts.EmptyStore()
 	store.Accounts = []accounts.Account{
 		accounts.CreateAccount(accounts.Account{Label: "cn", Site: "domestic", BearerToken: "cn-token", Enabled: true}),
 		accounts.CreateAccount(accounts.Account{Label: "us", Site: "global", BearerToken: "us-token", Enabled: true}),
+		accounts.CreateAccount(accounts.Account{Label: "cooling", Site: "global", BearerToken: "cooling-token", CooldownUntil: now.Add(time.Hour).UnixMilli()}),
+		accounts.CreateAccount(accounts.Account{Label: "exhausted", Site: "global", BearerToken: "exhausted-token", QuotaRemaining: new(0.0), QuotaResetAt: now.Add(time.Hour).UnixMilli(), QuotaCheckedAt: now.UnixMilli()}),
+		accounts.CreateAccount(accounts.Account{Label: "no-credentials", Site: "global"}),
 	}
 	summary := accounts.SummarizeStoreForSite(store, "mem", "global")
 	if summary.ActiveSite != "global" {
 		t.Fatalf("activeSite=%q", summary.ActiveSite)
 	}
-	if summary.DomesticCount != 1 || summary.GlobalCount != 1 {
+	if summary.DomesticCount != 1 || summary.GlobalCount != 4 {
 		t.Fatalf("counts domestic=%d global=%d", summary.DomesticCount, summary.GlobalCount)
 	}
 	if summary.Primary == nil || summary.Primary.Site != "global" {
 		t.Fatalf("primary=%+v", summary.Primary)
 	}
-	if summary.ActiveEnabledCount != 1 {
-		t.Fatalf("activeEnabled=%d", summary.ActiveEnabledCount)
+	if summary.ActiveEnabledCount != 4 || summary.ActiveAvailableCount != 1 {
+		t.Fatalf("activeEnabled=%d activeAvailable=%d", summary.ActiveEnabledCount, summary.ActiveAvailableCount)
 	}
 }
 

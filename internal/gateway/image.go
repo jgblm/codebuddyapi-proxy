@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wnddd839/codebuddy-proxy/internal/accounts"
+	"github.com/wnddd839/codebuddy-proxy/internal/billing"
 	"github.com/wnddd839/codebuddy-proxy/internal/provider"
 )
 
@@ -28,6 +29,7 @@ func (s *Service) ImageFromPool(ctx context.Context, opts ImageOptions) (ImageRe
 		Site:        site,
 		ExcludeIDs:  opts.ExcludeIDs,
 		PreferQuota: opts.AccountID == "",
+		Model:       strings.TrimSpace(opts.Model),
 	})
 	if err != nil {
 		return ImageResult{}, err
@@ -49,6 +51,7 @@ func (s *Service) ImageFromPool(ctx context.Context, opts ImageOptions) (ImageRe
 			s.Log.Info("codebuddy image request canceled by client", "accountId", account.ID, "model", opts.Model)
 			return ImageResult{}, err
 		}
+		selection.ModelRateLimited = billing.IsModelRateLimitError(err)
 		complete := CompleteOptions{
 			FixedAccount: opts.FixedAccount,
 			Site:         site,

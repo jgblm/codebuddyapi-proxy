@@ -8,7 +8,7 @@ import (
 // UIRevision is the admin console markup/script stamp. Bump it on every
 // meaningful change to PageHTML so operators can tell the rebuilt binary
 // carries the new UI (independent of the release tag injected via ldflags).
-const UIRevision = "2026.10.16-expiry-account-keys"
+const UIRevision = "2026.10.20-attention-account-menu"
 
 func PageHTML() string {
 	return `<!doctype html>
@@ -142,7 +142,7 @@ h1{
 .lede{margin:0;color:var(--fg-60);font-size:13.5px;line-height:1.6;max-width:52ch}
 .checkin-hint{margin:12px 0 0;font-size:11.5px;line-height:1.5;color:var(--fg-40);max-width:58ch}
 .checkin-detail{margin:12px 0 0;padding:10px 12px;border:1px solid var(--fg-10);font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--fg-80);white-space:pre-wrap}
-.test-model-label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-60)}
+.test-model-label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-60);white-space:nowrap}
 .test-model-label select{min-width:160px;font-size:13px}
 .metrics{
   display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-top:24px;
@@ -237,6 +237,8 @@ select:focus,input:focus{border-bottom-color:var(--fg)}
 .seg button:last-child{border-right:none}
 .seg button.active{background:var(--invert-bg);color:var(--invert-fg);font-weight:500}
 .seg-hint{margin:10px 0 16px;color:var(--fg-40);font-size:12px}
+/* 从 OAuth 回调带 #codebuddy 进来时，滚动目标不要被吸顶栏盖住 */
+#codebuddy{scroll-margin-top:88px}
 .meta{color:var(--fg-60);font-size:12.5px;line-height:1.5}
 .meta code,.mono{font-family:var(--mono);font-size:12px}
 .err{margin-top:4px;color:var(--fg);font-family:var(--mono);font-size:12px;border-left:2px solid var(--fg);padding-left:8px}
@@ -363,6 +365,39 @@ pre{
 .usage-chart .line-rate{fill:none;stroke:var(--fg-60);stroke-width:1.5;stroke-dasharray:5 4}
 .usage-chart .lbl{fill:var(--fg-40);font-family:var(--sans);font-size:10px}
 
+/* 号池批量操作行 */
+.ops-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 4px}
+/* 概览「需要关注」 */
+.attention{border-top:1px solid var(--fg-10);margin-top:4px}
+.attention-row{
+  display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;
+  padding:12px 0;border-bottom:1px solid var(--fg-10);
+}
+.attention-row .who{font-size:13px;color:var(--fg);min-width:0;overflow-wrap:anywhere}
+.attention-row .who .meta{color:var(--fg-60);font-size:12.5px}
+.reasons{display:flex;gap:6px;flex-wrap:wrap}
+.badge.warn{border-color:var(--fg-40);color:var(--fg)}
+.badge.bad{background:var(--invert-bg);border-color:var(--invert-bg);color:var(--invert-fg)}
+/* 账号卡的次要操作收纳 */
+.more{position:relative;display:inline-flex}
+.more summary{
+  list-style:none;cursor:pointer;border:1px solid var(--fg-10);padding:4px 10px;
+  font-size:11px;color:var(--fg-60);letter-spacing:.08em;text-transform:uppercase;
+}
+.more summary::-webkit-details-marker{display:none}
+.more summary:hover,.more[open] summary{color:var(--fg);border-color:var(--fg-40)}
+.more-menu{
+  position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:148px;
+  background:var(--bg);border:1px solid var(--fg-20);display:flex;flex-direction:column;
+}
+.more-menu button{border:none;padding:8px 12px;justify-content:flex-start;font-size:11px;color:var(--fg-60)}
+/* 账号卡片的 .actions button 优先级更高，这里显式覆盖，避免菜单项带上按钮边框和内边距 */
+.account .actions .more-menu button{border:none;padding:8px 12px;color:var(--fg-60)}
+.account .actions .more-menu button:hover{border:none;background:rgba(28,28,28,.03);color:var(--fg)}
+.more-menu button + button{border-top:1px solid var(--fg-10)}
+.more-menu button:hover{background:rgba(28,28,28,.03);color:var(--fg);border-color:transparent}
+.more-menu button.danger:hover{background:var(--invert-bg);color:var(--invert-fg)}
+
 #statusBox,#oauthBox,#modelsBox{display:none}
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none !important;transition:none !important}
@@ -431,19 +466,18 @@ pre{
         </div>
         <div class="actions" style="margin-top:24px">
           <button class="primary" id="btnRefresh" type="button">刷新状态</button>
-          <button class="ghost" id="btnCheckin" type="button" disabled aria-describedby="checkinHint">每日签到</button>
-          <button class="ghost" id="btnPoolTest" type="button" disabled aria-describedby="poolTestHint">批量测试</button>
-          <label class="test-model-label" for="testModelSelect">测试模型
-            <select id="testModelSelect" aria-label="账号测试使用的模型">
-              <option value="">自动（最低倍率）</option>
-            </select>
-          </label>
-          <button class="ghost" id="btnModels" type="button">拉取模型</button>
         </div>
-        <p class="checkin-hint" id="checkinHint">一键为当前号池全部已启用账号签到（国内站约 100 积分/天）。</p>
-        <p class="checkin-hint" id="poolTestHint">对当前号池已启用账号发最小 chat，验证可用性与延迟；默认选最低倍率模型。</p>
-        <pre class="checkin-detail" id="checkinRaw" hidden></pre>
-        <pre class="checkin-detail" id="poolTestRaw" hidden></pre>
+
+        <div class="section-head" style="margin-top:28px">
+          <div>
+            <h2>需要关注</h2>
+            <p>当前号池中未登录、冷却、配额耗尽、余额偏低或最近报错的启用账号。</p>
+          </div>
+          <div class="actions">
+            <button class="linkbtn" type="button" id="btnGoAccounts">去账号池处理</button>
+          </div>
+        </div>
+        <div class="attention" id="attentionList"><div class="empty">加载中…</div></div>
       </div>
     </section>
 
@@ -482,6 +516,19 @@ pre{
           </div>
         </div>
         <p class="seg-hint" id="poolSiteHint">当前号池：—</p>
+        <div class="ops-row">
+          <button class="ghost" id="btnCheckin" type="button" disabled aria-describedby="checkinHint">每日签到</button>
+          <button class="ghost" id="btnPoolTest" type="button" disabled aria-describedby="poolTestHint">批量测试</button>
+          <label class="test-model-label" for="testModelSelect">测试模型
+            <select id="testModelSelect" aria-label="账号测试使用的模型">
+              <option value="">自动（最低倍率）</option>
+            </select>
+          </label>
+        </div>
+        <p class="checkin-hint" id="checkinHint">一键为当前号池全部已启用账号签到（国内站约 100 积分/天）。</p>
+        <p class="checkin-hint" id="poolTestHint">对当前号池已启用账号发最小 chat，验证可用性与延迟；默认选最低倍率模型。</p>
+        <pre class="checkin-detail" id="checkinRaw" hidden></pre>
+        <pre class="checkin-detail" id="poolTestRaw" hidden></pre>
         <div id="accounts"></div>
       </div>
     </section>
@@ -609,8 +656,11 @@ pre{
             <h2>可用模型编目</h2>
             <p>展示上游模型名（不含 codebuddy/ 前缀）；点击模型芯片可复制。</p>
           </div>
+          <div class="actions">
+            <button class="ghost" id="btnModels" type="button">重新拉取</button>
+          </div>
         </div>
-        <div class="chips" id="modelChips"><div class="empty">点击「拉取模型」加载</div></div>
+        <div class="chips" id="modelChips"><div class="empty">加载中…</div></div>
         <details class="raw">
           <summary>原始模型响应</summary>
           <pre id="modelsRaw">[]</pre>
@@ -906,6 +956,8 @@ function renderAccounts(summary, activeSite) {
   const box = $('accounts');
   const all = (summary && summary.accounts) || [];
   const expanded = new Set(Array.from(box.querySelectorAll('.package-expiry[open]')).map(function(d){ return d.closest('.account').getAttribute('data-account-id'); }));
+  // 15 秒轮询会重绘卡片；记住已展开的「更多」菜单，避免操作到一半被收起。
+  const menuOpen = new Set(Array.from(box.querySelectorAll('.more[open]')).map(function(d){ return d.closest('.account').getAttribute('data-account-id'); }));
   const accountSelect = $('boundKeyAccount');
   if (accountSelect) {
     const selected = accountSelect.value;
@@ -918,71 +970,61 @@ function renderAccounts(summary, activeSite) {
   }
   activeSite = normalizeSite(activeSite || (summary && summary.activeSite) || '');
   if (!all.length) {
-    box.innerHTML = '<div class="empty">暂无账号。请先在下方完成 OAuth 登录。</div>';
+    box.innerHTML = '<div class="empty">暂无账号。请在下方 OAuth 区域完成登录。</div>';
+    renderAttention(summary, activeSite);
     return;
   }
   const accounts = all.filter(function(a){ return normalizeSite(a.site) === activeSite; });
   if (!accounts.length) {
     box.innerHTML = '<div class="empty">当前号池没有账号，切到另一区域可管理其他号</div>';
+    renderAttention(summary, activeSite);
     return;
   }
   box.innerHTML = accounts.map(function(a) {
+    const id = escapeHtml(a.id);
     const name = escapeHtml(a.userNickname || a.userName || a.userId || '未命名用户');
     const label = escapeHtml(a.label || a.id);
     const logged = a.loggedIn && a.hasCredentials;
     const site = normalizeSite(a.site);
-    const inPool = true;
-    let poolStateHtml = '';
-    if (a.quotaExhausted && a.quotaResetAt) {
-      poolStateHtml = '<div class="usage-line"><span class="pill bad">配额耗尽 · ' + escapeHtml(formatResetAt(a.quotaResetAt)) + ' 恢复</span></div>';
-    } else if (a.cooldownUntil && a.cooldownUntil > Date.now()) {
-      poolStateHtml = '<div class="usage-line"><span class="pill warn">冷却中 · ' + escapeHtml(formatResetAt(a.cooldownUntil)) + ' 恢复</span></div>';
-    } else if (a.quotaRemaining != null && Number(a.quotaRemaining) <= 0) {
-      poolStateHtml = '<div class="usage-line"><span class="pill warn">配额可能已耗尽</span></div>';
-    }
+    const states = accountStates(a);
     const usage = usageByAccount[a.id];
-    let usageHtml = '<div class="usage-line"><button class="ghost" data-act="usage" data-id="' + escapeHtml(a.id) + '" type="button">查余额</button></div>';
+    let usageHtml = '';
     if (usage && usage.error) {
-      usageHtml = '<div class="usage-line"><span class="pill bad" title="' + escapeHtml(usage.error) + '">查询失败</span> ' +
-        '<button class="ghost" data-act="usage" data-id="' + escapeHtml(a.id) + '" type="button">重试</button></div>';
+      usageHtml = '<div class="usage-line"><span class="pill bad" title="' + escapeHtml(usage.error) + '">余额查询失败</span> ' +
+        '<button class="ghost" data-act="usage" data-id="' + id + '" type="button">重试</button></div>';
     } else if (usage && usage.credits) {
       const c = usage.credits;
       const remaining = c.unlimited ? '不限量' : (c.remaining == null ? '-' : String(c.remaining));
       const total = c.unlimited ? '不限量' : (c.total == null ? '-' : String(c.total));
-      let level = 'good';
-      if (!c.unlimited && Number(c.total) > 0) {
-        const ratio = Number(c.remaining) / Number(c.total);
-        if (ratio <= 0.05 || Number(c.remaining) <= 0) level = 'bad';
-        else if (ratio <= 0.2) level = 'warn';
-      }
-      if (usage.notify && usage.notify.level === 'bad') level = 'bad';
-      else if (usage.notify && usage.notify.level === 'warn' && level === 'good') level = 'warn';
-      usageHtml = '<div class="usage-line"><span class="pill ' + level + '">' + escapeHtml(remaining + ' / ' + total) + ' Credits</span> ' +
-        '<button class="ghost" data-act="usage" data-id="' + escapeHtml(a.id) + '" type="button">刷新余额</button> ' +
-        '<a href="' + escapeHtml(usage.officialUsageUrl || 'https://www.codebuddy.cn/profile/plan') + '" target="_blank" rel="noreferrer">官网套餐</a></div>';
+      usageHtml = '<div class="usage-line"><span class="pill ' + creditLevel(usage) + '">' + escapeHtml(remaining + ' / ' + total) + ' Credits</span> ' +
+        '<a href="' + escapeHtml(safeHttpUrl(usage.officialUsageUrl, 'https://www.codebuddy.cn/profile/plan')) + '" target="_blank" rel="noreferrer">官网套餐</a></div>';
       usageHtml += packageExpiryView(usage, Date.now());
     }
-    return '<div class="account" data-account-id="' + escapeHtml(a.id) + '">' +
+    const poolStateHtml = states.map(function(s){
+      return '<div class="usage-line"><span class="pill ' + s.level + '">' + escapeHtml(s.text) + '</span></div>';
+    }).join('');
+    return '<div class="account" data-account-id="' + id + '">' +
       '<div class="account-top">' +
         '<div class="account-title">' +
           '<strong>' + label + '</strong>' +
           '<span class="badge site">' + escapeHtml(siteLabel(site)) + '</span>' +
-          '<span class="badge ' + (inPool?'on':'muted') + '">' + (inPool?'当前号池':'其他区域') + '</span>' +
           '<span class="badge ' + (logged?'on':'off') + '">' + (logged?'已登录':'未登录') + '</span>' +
-          '<span class="badge ' + (a.enabled?'on':'off') + '">' + (a.enabled?'enabled':'disabled') + '</span>' +
+          (a.enabled ? '' : '<span class="badge off">已禁用</span>') +
+          (a.tokenExpired ? '<span class="badge bad">Token 过期</span>' : '') +
         '</div>' +
         '<div class="actions">' +
-          '<button class="ghost" data-act="test" data-id="' + escapeHtml(a.id) + '" type="button">测试</button>' +
-          '<button class="ghost" data-act="usage" data-id="' + escapeHtml(a.id) + '" type="button">查余额</button>' +
-          '<button class="ghost" data-act="toggle" data-id="' + escapeHtml(a.id) + '" data-enabled="' + (a.enabled?0:1) + '" type="button">' + (a.enabled?'禁用':'启用') + '</button>' +
-          '<button class="ghost" data-act="refresh" data-id="' + escapeHtml(a.id) + '" type="button">刷新 Token</button>' +
-          '<button class="danger" data-act="delete" data-id="' + escapeHtml(a.id) + '" type="button">删除</button>' +
+          '<button class="ghost" data-act="test" data-id="' + id + '" type="button">测试</button>' +
+          '<button class="ghost" data-act="usage" data-id="' + id + '" type="button">' + (usage && usage.credits ? '刷新余额' : '查余额') + '</button>' +
+          '<details class="more"' + (menuOpen.has(a.id) ? ' open' : '') + '><summary aria-label="更多操作">更多</summary><div class="more-menu">' +
+            '<button data-act="toggle" data-id="' + id + '" data-enabled="' + (a.enabled?0:1) + '" type="button">' + (a.enabled?'禁用账号':'启用账号') + '</button>' +
+            '<button data-act="refresh" data-id="' + id + '" type="button">刷新 Token</button>' +
+            '<button class="danger" data-act="delete" data-id="' + id + '" type="button">删除账号</button>' +
+          '</div></details>' +
         '</div>' +
       '</div>' +
       '<div class="meta">' + name +
         ' · <span class="mono">' + escapeHtml(a.authType||'') + '</span>' +
         ' · success ' + (a.successRequests||0) + ' / fail ' + (a.failedRequests||0) +
-        (a.tokenExpired ? ' · <span class="err">token expired</span>' : '') +
       '</div>' +
       usageHtml +
       poolStateHtml +
@@ -991,6 +1033,81 @@ function renderAccounts(summary, activeSite) {
   }).join('');
   box.querySelectorAll('.package-expiry').forEach(function(d){ d.open = expanded.has(d.closest('.account').getAttribute('data-account-id')); });
   box.querySelectorAll('button[data-act]').forEach(function(btn){ btn.addEventListener('click', onAccountAction); });
+  renderAttention(summary, activeSite);
+}
+
+// 账号的调度阻塞状态；账号卡片和概览「需要关注」共用同一份判断。
+function accountStates(a){
+  const now = Date.now();
+  const out = [];
+  if (a.quotaExhausted && a.quotaResetAt) {
+    out.push({level:'bad', text:'配额耗尽 · ' + formatResetAt(a.quotaResetAt) + ' 恢复'});
+  } else if (a.cooldownUntil && a.cooldownUntil > now) {
+    out.push({level:'warn', text:'冷却中 · ' + formatResetAt(a.cooldownUntil) + ' 恢复'});
+  } else if (a.quotaRemaining != null && Number(a.quotaRemaining) <= 0) {
+    out.push({level:'warn', text:'配额可能已耗尽'});
+  }
+  Object.entries(a.modelCooldowns || {}).forEach(function(entry) {
+    if (entry[1] > now) out.push({level:'warn', text:'模型冷却 · ' + entry[0] + ' · ' + formatResetAt(entry[1]) + ' 恢复'});
+  });
+  return out;
+}
+
+function creditLevel(usage){
+  const c = (usage && usage.credits) || {};
+  let level = 'good';
+  if (!c.unlimited && Number(c.total) > 0) {
+    const ratio = Number(c.remaining) / Number(c.total);
+    if (ratio <= 0.05 || Number(c.remaining) <= 0) level = 'bad';
+    else if (ratio <= 0.2) level = 'warn';
+  }
+  if (usage && usage.notify && usage.notify.level === 'bad') level = 'bad';
+  else if (usage && usage.notify && usage.notify.level === 'warn' && level === 'good') level = 'warn';
+  return level;
+}
+
+// 上游给的链接放进 href 前只放行 http(s)。
+function safeHttpUrl(raw, fallback){
+  const s = String(raw || '').trim();
+  return /^https?:\/\//i.test(s) ? s : fallback;
+}
+
+function renderAttention(summary, activeSite){
+  const box = $('attentionList');
+  if (!box) return;
+  const all = (summary && summary.accounts) || [];
+  if (!all.length) {
+    box.innerHTML = '<div class="empty">号池为空。到「账号池与授权」页添加账号。</div>';
+    return;
+  }
+  const site = normalizeSite(activeSite);
+  const rows = all.filter(function(a){
+    return a.enabled && normalizeSite(a.site) === site;
+  }).map(function(a){
+    const reasons = accountStates(a);
+    if (!(a.loggedIn && a.hasCredentials)) reasons.unshift({level:'bad', text:'未登录'});
+    if (a.tokenExpired) reasons.unshift({level:'bad', text:'Token 过期'});
+    const usage = usageByAccount[a.id];
+    if (usage && usage.credits && creditLevel(usage) !== 'good') {
+      reasons.push({level: creditLevel(usage), text: '余额偏低'});
+    }
+    if (a.lastError) reasons.push({level:'muted', text:'最近报错'});
+    return {a:a, reasons:reasons};
+  }).filter(function(r){ return r.reasons.length; });
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">当前号池的启用账号都正常。</div>';
+    return;
+  }
+  box.innerHTML = rows.map(function(r){
+    return '<div class="attention-row">' +
+      '<div class="who"><strong>' + escapeHtml(r.a.label || r.a.id) + '</strong>' +
+        (r.a.lastError ? ' <span class="meta" title="' + escapeHtml(r.a.lastError) + '">· ' + escapeHtml(r.a.lastError) + '</span>' : '') +
+      '</div>' +
+      '<div class="reasons">' + r.reasons.map(function(s){
+        return '<span class="badge ' + s.level + '">' + escapeHtml(s.text) + '</span>';
+      }).join('') + '</div>' +
+    '</div>';
+  }).join('');
 }
 
 function bareModelId(raw){
@@ -1277,8 +1394,9 @@ function paintPoolHint(site, product, accounts){
   const domestic = accounts && accounts.domesticCount != null ? accounts.domesticCount : '—';
   const global = accounts && accounts.globalCount != null ? accounts.globalCount : '—';
   const activeEnabled = accounts && accounts.activeEnabledCount != null ? accounts.activeEnabledCount : '—';
+  const activeAvailable = accounts && accounts.activeAvailableCount != null ? accounts.activeAvailableCount : '—';
   if ($('poolSiteHint')) {
-    $('poolSiteHint').textContent = '当前号池：' + siteLabel(site) + ' · 上游：' + productLabel(product) + ' · 可用启用账号 ' + activeEnabled + ' · 国内账号 ' + domestic + ' / 国际账号 ' + global + '（仅当前区域会参与请求）';
+    $('poolSiteHint').textContent = '当前号池：' + siteLabel(site) + ' · 上游：' + productLabel(product) + ' · 启用账号 ' + activeEnabled + ' · 无整号阻塞 ' + activeAvailable + '（模型冷却另计） · 国内账号 ' + domestic + ' / 国际账号 ' + global + '（仅当前区域会参与请求）';
   }
 }
 
@@ -1694,6 +1812,8 @@ async function fetchAccountUsage(accountId, silent){
 }
 async function onAccountAction(ev){
   const btn = ev.currentTarget;
+  const menu = btn.closest('.more');
+  if (menu) menu.open = false;
   const id = btn.getAttribute('data-id');
   const act = btn.getAttribute('data-act');
   if (act === 'usage') {
@@ -1724,12 +1844,17 @@ async function onAccountAction(ev){
   await refreshStatus();
 }
 
+// 点击菜单外部时收起账号的「更多」菜单。
+document.addEventListener('click', function(ev){
+  document.querySelectorAll('.more[open]').forEach(function(d){ if (!d.contains(ev.target)) d.open = false; });
+});
+
 if ($('btnPoolDomestic')) $('btnPoolDomestic').onclick = function(){ switchPoolSite('domestic').catch(function(e){ showToast(e.message, 'error'); }); };
 if ($('btnPoolGlobal')) $('btnPoolGlobal').onclick = function(){ switchPoolSite('global').catch(function(e){ showToast(e.message, 'error'); }); };
 if ($('btnProductCodeBuddy')) $('btnProductCodeBuddy').onclick = function(){ switchPoolProduct('codebuddy').catch(function(e){ showToast(e.message, 'error'); }); };
 if ($('btnProductWorkBuddy')) $('btnProductWorkBuddy').onclick = function(){ switchPoolProduct('workbuddy').catch(function(e){ showToast(e.message, 'error'); }); };
 if ($('site')) $('site').addEventListener('change', function(){ $('site').dataset.userTouched = '1'; });
-$('btnRefresh').onclick = function(){
+if ($('btnRefresh')) $('btnRefresh').onclick = function(){
   const btn = $('btnRefresh');
   btn.disabled = true;
   refreshStatus(true).catch(function(e){
@@ -1763,7 +1888,8 @@ if ($('usageAccountFilter')) $('usageAccountFilter').onchange = onUsageFilterCha
 if ($('usageModelFilter')) $('usageModelFilter').onchange = onUsageFilterChange;
 if ($('btnCheckin')) $('btnCheckin').onclick = function(){ runPoolCheckin().catch(function(e){ showToast(e.message, 'error'); }); };
 if ($('btnPoolTest')) $('btnPoolTest').onclick = function(){ runPoolChatTest().catch(function(e){ showToast(e.message, 'error'); }); };
-$('btnModels').onclick = function(){ refreshModels().catch(function(e){ $('modelsRaw').textContent = e.message; $('modelChips').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>'; }); };
+if ($('btnModels')) $('btnModels').onclick = function(){ refreshModels().catch(function(e){ $('modelsRaw').textContent = e.message; $('modelChips').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>'; }); };
+if ($('btnGoAccounts')) $('btnGoAccounts').onclick = function(){ switchTab('tab-pool'); };
 $('btnStart').onclick = function(){ startOAuth().catch(function(e){ $('oauthMsg').textContent = e.message; $('oauthRaw').textContent = e.message; }); };
 $('btnPoll').onclick = function(){ pollOAuth().catch(function(e){ $('oauthMsg').textContent = e.message; $('oauthRaw').textContent = e.message; }); };
 $('btnRefreshClient').onclick = function(){ refreshClientConfig().catch(function(e){ showToast(e.message, 'error'); }); };

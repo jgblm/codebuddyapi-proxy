@@ -352,6 +352,7 @@ func SessionPinKey(session, site string) string {
 }
 
 func (s *Service) CompleteFromPool(ctx context.Context, opts CompleteOptions) (CompleteResult, error) {
+	opts.Model = strutil.First(opts.Model, "auto")
 	if opts.FixedAccount && opts.AccountID == "" {
 		return CompleteResult{}, errors.New("固定账号请求缺少账号约束")
 	}
@@ -374,14 +375,15 @@ func (s *Service) CompleteFromPool(ctx context.Context, opts CompleteOptions) (C
 		s.refreshCandidateQuotas(ctx, opts.ExcludeIDs, true, site)
 	}
 	selection, err := s.Pool.Select(accounts.SelectOptions{
-		AccountID:   opts.AccountID,
-		Site:        site,
-		ExcludeIDs:  opts.ExcludeIDs,
-		PreferQuota: opts.AccountID == "",
+		AccountID:     opts.AccountID,
+		Site:          site,
+		ExcludeIDs:    opts.ExcludeIDs,
+		PreferQuota:   opts.AccountID == "",
+		Model:         opts.Model,
+		CheckCooldown: !opts.FixedAccount,
 	})
 	if err != nil {
-		// 会话钉号与当前 SITE 不符时 Select 会早退；此处 Forget + 清 AccountID 重入，
-		// 对齐 reRetryNextAccount 对 site mismatch 的换号自愈意图。
+		// 软钉号不可用时先清钉；冷却账号仍保留普通池的全冷却兜底资格。
 		if !opts.FixedAccount && opts.AccountID != "" && isPinnedAccountUnusable(err) {
 			staleID := opts.AccountID
 			if pinKey != "" {
@@ -393,7 +395,9 @@ func (s *Service) CompleteFromPool(ctx context.Context, opts CompleteOptions) (C
 				"pin_cleared_reason", pinnedAccountUnusableReason(err),
 				"error", err.Error(),
 			)
-			opts.ExcludeIDs = append(append([]string{}, opts.ExcludeIDs...), staleID)
+			if !errors.Is(err, accounts.ErrAccountCoolingDown) {
+				opts.ExcludeIDs = append(append([]string{}, opts.ExcludeIDs...), staleID)
+			}
 			opts.AccountID = ""
 			opts.RetryDepth++
 			return s.CompleteFromPool(ctx, opts)
@@ -420,6 +424,7 @@ func (s *Service) CompleteFromPool(ctx context.Context, opts CompleteOptions) (C
 			s.Log.Info("codebuddy request canceled by client", "accountId", account.ID, "model", opts.Model)
 			return CompleteResult{}, err
 		}
+		selection.ModelRateLimited = billing.IsModelRateLimitError(err)
 		if s.shouldRetryNextAccount(err, selection, opts) {
 			if pinKey != "" {
 				s.Pins.Forget(pinKey)
@@ -497,6 +502,7 @@ func (s *Service) refreshSelected(ctx context.Context, selection accounts.Select
 	updated.LastSelectedAt = account.LastSelectedAt
 	updated.CreatedAt = account.CreatedAt
 	updated.CooldownUntil = account.CooldownUntil
+	updated.ModelCooldowns = account.ModelCooldowns
 	updated.QuotaRemaining = account.QuotaRemaining
 	updated.QuotaUnlimited = account.QuotaUnlimited
 	updated.QuotaResetAt = account.QuotaResetAt
@@ -573,6 +579,8 @@ func pinnedAccountUnusableReason(err error) string {
 		return "not_found"
 	case errors.Is(err, accounts.ErrNoCredentials):
 		return "no_credentials"
+	case errors.Is(err, accounts.ErrAccountCoolingDown):
+		return "cooldown"
 	case isSiteMismatchError(err):
 		return "site_mismatch"
 	default:

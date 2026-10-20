@@ -437,6 +437,10 @@ usage chunk 形如：
 | POST · PUT | `/direct-admin/api/pool-site` | 切换**默认**号池区域 `domestic` / `global`，回写 `.env`。请求仍可用 Key 绑定、`X-Site` 或 `cn:`/`global:` 前缀覆盖 |
 | POST · PUT | `/direct-admin/api/pool-product` | 切换上游产品 `codebuddy` / `workbuddy`，回写 `.env`；国内国际账号共用同一选择 |
 
+状态中的 `accounts.activeEnabledCount` 仅表示当前区域已启用数量；
+`activeAvailableCount` 再排除无凭据、整号冷却及有效配额阻塞，不保证指定模型可用。
+各账号的 `modelCooldowns` 按请求上游的模型 ID 返回恢复时间戳（毫秒），模型限制单独展示。
+
 `generate-key` 会同步置 `CODEBUDDY_PROXY_REQUIRE_API_KEY=true`。**主 Key（`CODEBUDDY_PROXY_API_KEY`）立即失效**，客户端必须同步更换。`CODEBUDDY_PROXY_API_KEYS` 里的绑定 Key 不受影响。
 
 ### 账号池

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,10 +19,11 @@ import (
 )
 
 var (
-	ErrNoAccounts      = errors.New("no enabled CodeBuddy accounts with credentials available")
-	ErrAccountNotFound = errors.New("CodeBuddy account not found")
-	ErrAccountDisabled = errors.New("CodeBuddy account is disabled")
-	ErrNoCredentials   = errors.New("CodeBuddy account has no credentials")
+	ErrNoAccounts         = errors.New("no enabled CodeBuddy accounts with credentials available")
+	ErrAccountNotFound    = errors.New("CodeBuddy account not found")
+	ErrAccountDisabled    = errors.New("CodeBuddy account is disabled")
+	ErrNoCredentials      = errors.New("CodeBuddy account has no credentials")
+	ErrAccountCoolingDown = errors.New("CodeBuddy account is cooling down")
 )
 
 func (a *Account) UnmarshalJSON(data []byte) error {
@@ -87,6 +89,8 @@ type Account struct {
 	QuotaUnlimited      bool       `json:"quotaUnlimited,omitempty"`
 	QuotaResetAt        int64      `json:"quotaResetAt,omitempty"`
 	QuotaCheckedAt      int64      `json:"quotaCheckedAt,omitempty"`
+
+	ModelCooldowns map[string]int64 `json:"modelCooldowns,omitempty"`
 }
 
 type Store struct {
@@ -102,6 +106,8 @@ type Selection struct {
 	Index            int
 	Store            Store
 	BypassedCooldown bool // 全部账号冷却时降级选最快恢复者
+	Model            string
+	ModelRateLimited bool
 }
 
 type Pool struct {
@@ -143,6 +149,9 @@ func cloneStore(store Store) Store {
 	out := store
 	if store.Accounts != nil {
 		out.Accounts = append([]Account(nil), store.Accounts...)
+		for i := range out.Accounts {
+			out.Accounts[i].ModelCooldowns = maps.Clone(out.Accounts[i].ModelCooldowns)
+		}
 	}
 	return out
 }
@@ -462,6 +471,7 @@ func NormalizeAccount(raw Account, now int64) Account {
 		FailedRequests:      raw.FailedRequests,
 		LastError:           strutil.Compact(raw.LastError),
 		CooldownUntil:       raw.CooldownUntil,
+		ModelCooldowns:      maps.Clone(raw.ModelCooldowns),
 		QuotaRemaining:      cloneFloatPtr(raw.QuotaRemaining),
 		QuotaUnlimited:      raw.QuotaUnlimited,
 		QuotaResetAt:        raw.QuotaResetAt,
@@ -520,8 +530,8 @@ func QuotaBlocked(account Account, nowMillis int64) bool {
 	return true
 }
 
-func unavailableUntil(account Account, nowMillis int64) int64 {
-	until := account.CooldownUntil
+func unavailableUntil(account Account, nowMillis int64, model string) int64 {
+	until := max(account.CooldownUntil, account.ModelCooldowns[model])
 	if QuotaBlocked(account, nowMillis) {
 		until = max(until, account.QuotaResetAt)
 	}
@@ -557,10 +567,13 @@ func (p *Pool) Select(opts SelectOptions) (Selection, error) {
 			if opts.Site != "" && config.NormalizeSite(account.Site) != config.NormalizeSite(opts.Site) {
 				return Selection{}, fmt.Errorf("CodeBuddy account site mismatch: account=%s, configured=%s", account.Site, config.NormalizeSite(opts.Site))
 			}
+			if opts.CheckCooldown && unavailableUntil(account, now, opts.Model) > now {
+				return Selection{}, fmt.Errorf("%w: %s", ErrAccountCoolingDown, opts.AccountID)
+			}
 			store.Accounts[i].LastSelectedAt = now
 			p.mem = store
 			p.markDirtyLocked()
-			return Selection{Source: "pool", Account: store.Accounts[i], Index: i, Store: cloneStore(store)}, nil
+			return Selection{Source: "pool", Account: store.Accounts[i], Index: i, Store: cloneStore(store), Model: opts.Model}, nil
 		}
 		return Selection{}, fmt.Errorf("%w: %s", ErrAccountNotFound, opts.AccountID)
 	}
@@ -573,7 +586,7 @@ func (p *Pool) Select(opts SelectOptions) (Selection, error) {
 		exclude[id] = struct{}{}
 	}
 	if opts.PreferQuota {
-		if sel, ok := p.pickHighestQuotaLocked(&store, now, opts.Site, exclude); ok {
+		if sel, ok := p.pickHighestQuotaLocked(&store, now, opts.Site, opts.Model, exclude); ok {
 			p.mem = store
 			p.markDirtyLocked()
 			return sel, nil
@@ -595,7 +608,7 @@ func (p *Pool) Select(opts SelectOptions) (Selection, error) {
 		if _, skip := exclude[account.ID]; skip {
 			continue
 		}
-		if blockedUntil := unavailableUntil(account, now); blockedUntil > now {
+		if blockedUntil := unavailableUntil(account, now, opts.Model); blockedUntil > now {
 			if blockedUntil > 0 && (fallbackIdx < 0 || blockedUntil < fallbackUntil) {
 				fallbackIdx = idx
 				fallbackUntil = blockedUntil
@@ -606,7 +619,7 @@ func (p *Pool) Select(opts SelectOptions) (Selection, error) {
 		store.NextIndex = (idx + 1) % len(store.Accounts)
 		p.mem = store
 		p.markDirtyLocked()
-		return Selection{Source: "pool", Account: store.Accounts[idx], Index: idx, Store: cloneStore(store)}, nil
+		return Selection{Source: "pool", Account: store.Accounts[idx], Index: idx, Store: cloneStore(store), Model: opts.Model}, nil
 	}
 	if fallbackIdx >= 0 {
 		store.Accounts[fallbackIdx].LastSelectedAt = now
@@ -619,6 +632,7 @@ func (p *Pool) Select(opts SelectOptions) (Selection, error) {
 			Index:            fallbackIdx,
 			Store:            cloneStore(store),
 			BypassedCooldown: true,
+			Model:            opts.Model,
 		}, nil
 	}
 	if opts.Site != "" {
@@ -637,7 +651,7 @@ func quotaScore(account Account) (float64, bool) {
 	return *account.QuotaRemaining, true
 }
 
-func (p *Pool) pickHighestQuotaLocked(store *Store, now int64, site string, exclude map[string]struct{}) (Selection, bool) {
+func (p *Pool) pickHighestQuotaLocked(store *Store, now int64, site, model string, exclude map[string]struct{}) (Selection, bool) {
 	bestIdx := -1
 	var bestRemaining float64
 	hasQuota := false
@@ -651,7 +665,7 @@ func (p *Pool) pickHighestQuotaLocked(store *Store, now int64, site string, excl
 		if _, skip := exclude[account.ID]; skip {
 			continue
 		}
-		if unavailableUntil(account, now) > now {
+		if unavailableUntil(account, now, model) > now {
 			continue
 		}
 		remaining, ok := quotaScore(account)
@@ -669,14 +683,16 @@ func (p *Pool) pickHighestQuotaLocked(store *Store, now int64, site string, excl
 	}
 	store.Accounts[bestIdx].LastSelectedAt = now
 	store.NextIndex = (bestIdx + 1) % len(store.Accounts)
-	return Selection{Source: "pool", Account: store.Accounts[bestIdx], Index: bestIdx, Store: cloneStore(*store)}, true
+	return Selection{Source: "pool", Account: store.Accounts[bestIdx], Index: bestIdx, Store: cloneStore(*store), Model: model}, true
 }
 
 type SelectOptions struct {
-	AccountID   string
-	Site        string
-	ExcludeIDs  []string
-	PreferQuota bool
+	AccountID     string
+	Site          string
+	ExcludeIDs    []string
+	PreferQuota   bool
+	Model         string
+	CheckCooldown bool // 会话软钉号检查冷却；显式固定账号仍可直接请求。
 }
 
 // InCooldown reports whether the account is temporarily excluded from pool rotation.
@@ -703,6 +719,8 @@ func (p *Pool) MarkResult(selection Selection, ok bool, errMsg string, cooldown 
 			p.mem.Accounts[i].SuccessRequests++
 			p.mem.Accounts[i].LastError = ""
 			p.mem.Accounts[i].CooldownUntil = 0
+			p.mem.Accounts[i].ModelCooldowns = maps.Clone(p.mem.Accounts[i].ModelCooldowns)
+			delete(p.mem.Accounts[i].ModelCooldowns, selection.Model)
 			// 全冷却降级打成功，说明「耗尽」快照已经过期；正常成功不能清额度，否则 PreferQuota 立刻失效。
 			if selection.BypassedCooldown {
 				clearQuotaCache(&p.mem.Accounts[i])
@@ -711,7 +729,16 @@ func (p *Pool) MarkResult(selection Selection, ok bool, errMsg string, cooldown 
 			p.mem.Accounts[i].FailedRequests++
 			p.mem.Accounts[i].LastError = strutil.Truncate(errMsg, 600)
 			if cooldown > 0 {
-				p.mem.Accounts[i].CooldownUntil = now + cooldown.Milliseconds()
+				if selection.ModelRateLimited && selection.Model != "" {
+					cooldowns := maps.Clone(p.mem.Accounts[i].ModelCooldowns)
+					if cooldowns == nil {
+						cooldowns = make(map[string]int64)
+					}
+					cooldowns[selection.Model] = now + cooldown.Milliseconds()
+					p.mem.Accounts[i].ModelCooldowns = cooldowns
+				} else {
+					p.mem.Accounts[i].CooldownUntil = now + cooldown.Milliseconds()
+				}
 			}
 		}
 		p.markDirtyLocked()
@@ -781,6 +808,7 @@ func (p *Pool) Upsert(account Account) (Account, Store, error) {
 			normalized.LastUsedAt = existing.LastUsedAt
 			normalized.LastSelectedAt = existing.LastSelectedAt
 			normalized.CooldownUntil = existing.CooldownUntil
+			normalized.ModelCooldowns = maps.Clone(existing.ModelCooldowns)
 			normalized.QuotaRemaining = cloneFloatPtr(existing.QuotaRemaining)
 			normalized.QuotaUnlimited = existing.QuotaUnlimited
 			normalized.QuotaResetAt = existing.QuotaResetAt
@@ -943,6 +971,8 @@ type Summary struct {
 	QuotaResetAt        int64    `json:"quotaResetAt,omitempty"`
 	QuotaCheckedAt      int64    `json:"quotaCheckedAt,omitempty"`
 	QuotaExhausted      bool     `json:"quotaExhausted"`
+
+	ModelCooldowns map[string]int64 `json:"modelCooldowns,omitempty"`
 }
 
 func SummarizeAccount(account Account) Summary {
@@ -982,6 +1012,7 @@ func SummarizeAccount(account Account) Summary {
 		TokenExpiresAt:      account.TokenExpiresAt,
 		TokenExpired:        account.TokenExpiresAt > 0 && account.TokenExpiresAt <= time.Now().UnixMilli(),
 		CooldownUntil:       account.CooldownUntil,
+		ModelCooldowns:      maps.Clone(account.ModelCooldowns),
 		QuotaRemaining:      cloneFloatPtr(account.QuotaRemaining),
 		QuotaUnlimited:      account.QuotaUnlimited,
 		QuotaResetAt:        account.QuotaResetAt,
@@ -1006,6 +1037,8 @@ type StoreSummary struct {
 	LoggedIn           bool      `json:"loggedIn"`
 	Primary            *Summary  `json:"primary"`
 	Accounts           []Summary `json:"accounts"`
+
+	ActiveAvailableCount int `json:"activeAvailableCount"` // 不含整号冷却/配额阻塞；模型限制另计。
 }
 
 func SummarizeStore(store Store, path string) StoreSummary {
@@ -1022,6 +1055,8 @@ func SummarizeStoreForSite(store Store, path, preferredSite string) StoreSummary
 	domestic := 0
 	global := 0
 	activeEnabled := 0
+	activeAvailable := 0
+	now := time.Now().UnixMilli()
 	loggedIn := false
 	var primary *Summary
 	var fallback *Summary
@@ -1038,6 +1073,10 @@ func SummarizeStoreForSite(store Store, path, preferredSite string) StoreSummary
 			enabled++
 			if preferredSite == "" || site == preferredSite {
 				activeEnabled++
+				// 未指定模型的汇总只排除整号阻塞；模型冷却单独展示。
+				if summary.HasCredentials && unavailableUntil(account, now, "") <= now {
+					activeAvailable++
+				}
 			}
 			if summary.HasCredentials && summary.LoggedIn {
 				if preferredSite == "" || site == preferredSite {
@@ -1066,21 +1105,22 @@ func SummarizeStoreForSite(store Store, path, preferredSite string) StoreSummary
 		primary = &copy
 	}
 	return StoreSummary{
-		OK:                 true,
-		Provider:           "codebuddy",
-		Version:            store.Version,
-		NextIndex:          store.NextIndex,
-		AccountsPath:       path,
-		Count:              len(accounts),
-		EnabledCount:       enabled,
-		DisabledCount:      len(accounts) - enabled,
-		DomesticCount:      domestic,
-		GlobalCount:        global,
-		ActiveSite:         preferredSite,
-		ActiveEnabledCount: activeEnabled,
-		LoggedIn:           loggedIn,
-		Primary:            primary,
-		Accounts:           accounts,
+		OK:                   true,
+		Provider:             "codebuddy",
+		Version:              store.Version,
+		NextIndex:            store.NextIndex,
+		AccountsPath:         path,
+		Count:                len(accounts),
+		EnabledCount:         enabled,
+		DisabledCount:        len(accounts) - enabled,
+		DomesticCount:        domestic,
+		GlobalCount:          global,
+		ActiveSite:           preferredSite,
+		ActiveEnabledCount:   activeEnabled,
+		ActiveAvailableCount: activeAvailable,
+		LoggedIn:             loggedIn,
+		Primary:              primary,
+		Accounts:             accounts,
 	}
 }
 
