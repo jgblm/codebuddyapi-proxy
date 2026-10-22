@@ -94,6 +94,13 @@ func TestResponsesNonStream_EndToEnd(t *testing.T) {
 	if resp.Usage == nil || resp.Usage.TotalTokens == 0 {
 		t.Fatalf("usage wrong: %+v", resp.Usage)
 	}
+	// 强类型 SDK（openai-java）把两个 cache 字段当必填，缺失即反序列化失败。
+	body2 := rec.Body.String()
+	for _, want := range []string{`"input_tokens_details"`, `"cached_tokens"`, `"cache_write_tokens"`} {
+		if !strings.Contains(body2, want) {
+			t.Fatalf("usage missing %s; body=%s", want, body2)
+		}
+	}
 	// 上游收到的 messages 必须含 instructions→system + input→user
 	if len(transport.bodies) == 0 {
 		t.Fatalf("upstream not called")
@@ -133,6 +140,11 @@ func TestResponsesStream_EndToEnd(t *testing.T) {
 	// response.completed 帧必须携带 usage
 	if !strings.Contains(raw, `"response.completed"`) {
 		t.Fatalf("missing response.completed; body:\n%s", raw)
+	}
+	for _, want := range []string{`"input_tokens_details"`, `"cached_tokens"`, `"cache_write_tokens"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("completed frame usage missing %s; body:\n%s", want, raw)
+		}
 	}
 }
 

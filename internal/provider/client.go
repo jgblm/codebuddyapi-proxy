@@ -137,8 +137,12 @@ type Usage struct {
 	CompletionTokensDetails  *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	CacheReadInputTokens     int                      `json:"cache_read_input_tokens,omitempty"`
 	CacheCreationInputTokens int                      `json:"cache_creation_input_tokens,omitempty"`
-	PromptCacheHitTokens     int                      `json:"prompt_cache_hit_tokens,omitempty"`
-	PromptCacheMissTokens    int                      `json:"prompt_cache_miss_tokens,omitempty"`
+	// CacheWriteTokens 只供 Responses 出站把 upstream 的 cache_write_tokens
+	// 映射进 input_tokens_details，不参与 provider.Usage 的 JSON 形态，
+	// 避免改动 Chat 等其他接口和用量记录的字段集。
+	CacheWriteTokens      int `json:"-"`
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
 	// Credit 为上游 usage 单次扣费（Credits），缺失时不估算。
 	Credit *float64 `json:"credit,omitempty"`
 	// Source 区分上游真实值与本地估算：upstream | estimated。
@@ -156,6 +160,15 @@ func (u Usage) CachedTokens() int {
 		return u.PromptCacheHitTokens
 	}
 	return 0
+}
+
+// CacheCreationTokens 返回写入缓存的 token 数，兼容 OpenAI cache_write_tokens
+// 与 Anthropic cache_creation_input_tokens 两套别名。
+func (u Usage) CacheCreationTokens() int {
+	if u.CacheWriteTokens > 0 {
+		return u.CacheWriteTokens
+	}
+	return u.CacheCreationInputTokens
 }
 
 // RequestTrace mirrors upstream protocol_direct header ids for admin diagnostics.
@@ -1389,8 +1402,12 @@ func ParseUsage(raw map[string]any) Usage {
 		TotalTokens:              intFrom(raw["total_tokens"], raw["totalTokens"]),
 		CacheReadInputTokens:     intFrom(raw["cache_read_input_tokens"], raw["cacheReadInputTokens"], raw["cache_tokens"], raw["cacheTokens"]),
 		CacheCreationInputTokens: intFrom(raw["cache_creation_input_tokens"], raw["cacheCreationInputTokens"]),
-		PromptCacheHitTokens:     intFrom(raw["prompt_cache_hit_tokens"], raw["promptCacheHitTokens"], raw["cached_tokens"], raw["cachedTokens"]),
-		PromptCacheMissTokens:    intFrom(raw["prompt_cache_miss_tokens"], raw["promptCacheMissTokens"]),
+		CacheWriteTokens: intFrom(
+			raw["cache_write_tokens"], raw["cacheWriteTokens"],
+			raw["prompt_cache_write_tokens"], raw["promptCacheWriteTokens"],
+		),
+		PromptCacheHitTokens:  intFrom(raw["prompt_cache_hit_tokens"], raw["promptCacheHitTokens"], raw["cached_tokens"], raw["cachedTokens"]),
+		PromptCacheMissTokens: intFrom(raw["prompt_cache_miss_tokens"], raw["promptCacheMissTokens"]),
 	}
 	for _, key := range []string{"prompt_tokens_details", "promptTokensDetails", "input_tokens_details", "inputTokensDetails"} {
 		details, ok := raw[key].(map[string]any)
@@ -1405,6 +1422,11 @@ func ParseUsage(raw map[string]any) Usage {
 		)
 		if cached > 0 {
 			usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: cached}
+		}
+		if usage.CacheWriteTokens == 0 {
+			usage.CacheWriteTokens = intFrom(details["cache_write_tokens"], details["cacheWriteTokens"])
+		}
+		if usage.PromptTokensDetails != nil {
 			break
 		}
 	}

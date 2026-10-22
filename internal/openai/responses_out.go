@@ -20,8 +20,12 @@ type ResponsesUsage struct {
 	TotalTokens         int                           `json:"total_tokens"`
 }
 
+// ResponsesInputTokensDetails 的 cached_tokens 与 cache_write_tokens 均不带
+// omitempty：官方 openai-java 等强类型 SDK 把两者当作必填，缺失会直接抛
+// "cache_write_tokens" is not set，即使真实值就是 0 也必须出现。
 type ResponsesInputTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
 }
 
 type ResponsesOutputTokensDetails struct {
@@ -42,7 +46,10 @@ func ResponsesUsageFromProvider(u provider.Usage) ResponsesUsage {
 	if u.CompletionTokensDetails != nil {
 		reasoning = u.CompletionTokensDetails.ReasoningTokens
 	}
-	out.InputTokensDetails = &ResponsesInputTokensDetails{CachedTokens: u.CachedTokens()}
+	out.InputTokensDetails = &ResponsesInputTokensDetails{
+		CachedTokens:     u.CachedTokens(),
+		CacheWriteTokens: u.CacheCreationTokens(),
+	}
 	out.OutputTokensDetails = &ResponsesOutputTokensDetails{ReasoningTokens: reasoning}
 	return out
 }

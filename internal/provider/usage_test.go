@@ -151,6 +151,39 @@ func TestParseUsageTopLevelAndInputDetails(t *testing.T) {
 	}
 }
 
+// cache_write_tokens 是 OpenAI 自己的别名，与 Anthropic 的
+// cache_creation_input_tokens 等价；Responses 出站需要这两个来源归一后
+// 填入 input_tokens_details.cache_write_tokens（不改其他接口的 JSON）。
+func TestParseUsageCacheWriteAliases(t *testing.T) {
+	top := ParseUsage(map[string]any{
+		"prompt_tokens":      float64(100),
+		"cache_write_tokens": float64(30),
+	})
+	if top.CacheCreationTokens() != 30 || top.CacheCreationInputTokens != 0 {
+		t.Fatalf("top-level write=%d", top.CacheCreationTokens())
+	}
+	details := ParseUsage(map[string]any{
+		"prompt_tokens": float64(100),
+		"input_tokens_details": map[string]any{
+			"cached_tokens":      float64(70),
+			"cache_write_tokens": float64(30),
+		},
+	})
+	if details.CacheCreationTokens() != 30 {
+		t.Fatalf("details write=%d", details.CacheCreationTokens())
+	}
+	if details.CachedTokens() != 70 {
+		t.Fatalf("details cached=%d", details.CachedTokens())
+	}
+	anthropic := ParseUsage(map[string]any{
+		"prompt_tokens":               float64(100),
+		"cache_creation_input_tokens": float64(12),
+	})
+	if anthropic.CacheCreationTokens() != 12 {
+		t.Fatalf("anthropic write=%d", anthropic.CacheCreationTokens())
+	}
+}
+
 // Live WorkBuddy (www.workbuddy.cn / .ai, glm-5.x) cache hit, captured 2026-09-11.
 // cache_read_input_tokens and top-level cached_tokens stay 0; the hit is
 // prompt_tokens_details.cached_tokens + prompt_cache_hit_tokens.
